@@ -167,6 +167,22 @@ class GenericTrainer(BaseTrainer):
         self.callbacks.on_update_status("creating the data loader/caching")
 
         # Create data loader with distributed support
+        # Load concepts and samples if not already loaded
+        if self.config.concepts is None:
+            with open(self.config.concept_file_name, 'r') as f:
+                concepts = json.load(f)
+                for i in range(len(concepts)):
+                    concepts[i] = ConceptConfig.default_values().from_dict(concepts[i])
+                self.config.concepts = concepts
+
+        if self.config.samples is None:
+            with open(self.config.sample_definition_file_name, 'r') as f:
+                samples = json.load(f)
+                for i in range(len(samples)):
+                    samples[i] = SampleConfig.default_values().from_dict(samples[i])
+                self.config.samples = samples
+
+        # Create data loader with distributed support
         self.data_loader = self.create_data_loader(
             self.model, self.model.train_progress
         )
