@@ -383,11 +383,31 @@ class GenericTrainer(BaseTrainer):
         """Check if training should stop"""
         if self.commands.stop_training:
             return True
-        
-        if self.model.train_progress.global_step >= self.config.max_train_steps:
+
+        if self.model.train_progress.global_step >= self.config.epochs * len(self.data_loader.get_data_loader()):
             return True
-            
+
         return False
+
+    def __needs_sample(self, train_progress: TrainProgress) -> bool:
+        """Check if sampling is needed"""
+        return self.repeating_action_needed(
+            "sample",
+            self.config.sample_after,
+            self.config.sample_after_unit,
+            train_progress,
+            start_at_zero=False,
+        )
+
+    def __needs_save(self, train_progress: TrainProgress) -> bool:
+        """Check if saving is needed"""
+        return self.repeating_action_needed(
+            "save",
+            self.config.save_every,
+            self.config.save_every_unit,
+            train_progress,
+            start_at_zero=False,
+        )
 
     def train_step(self):
         """Execute one training step"""
@@ -423,11 +443,34 @@ class GenericTrainer(BaseTrainer):
                 self.model.train_progress.global_step
             )
 
+        # Sample if needed
+        if self.__needs_sample(self.model.train_progress):
+            self.sample_queue.append(lambda: self.model_sampler.sample(
+                self.model,
+                self.config.samples,
+                self.config,
+                self.model.train_progress,
+                self.config.non_ema_sampling,
+            ))
+
+        # Save if needed
+        if self.__needs_save(self.model.train_progress):
+            self.save(self.model.train_progress)
+
         # Validate if needed
         self.__validate(self.model.train_progress)
 
         # Set one_step_trained flag
         self.one_step_trained = True
+
+        # Process sample queue
+        if len(self.sample_queue) > 0:
+            try:
+                self.sample_queue[0]()
+            except Exception as e:
+                print(f"Error during sampling: {e}")
+                traceback.print_exc()
+            self.sample_queue.pop(0)
 
     def __needs_gc(self, train_progress: TrainProgress) -> bool:
         """Check if garbage collection is needed"""
@@ -449,24 +492,13 @@ class GenericTrainer(BaseTrainer):
             start_at_zero=False,
         )
 
-    def __config_to_json(self) -> dict:
-        """Convert config to JSON-serializable dict"""
-        config_dict = {}
-        for key, value in vars(self.config).items():
-            if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
-                config_dict[key] = value
-            else:
-                # Convert non-serializable types to string representation
-                config_dict[key] = str(value)
-        return config_dict
-
     def __save_config_to_workspace(self):
         """Save training configuration to workspace"""
         config_path = os.path.join(self.config.workspace_dir, "config.json")
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         
         with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(self.__config_to_json(), f, indent=4)
+            json.dump(self.config.to_settings_dict(secrets=False), f, indent=4)
 
     def __save_backup_config(self, backup_path: str):
         """Save configuration for backup"""
@@ -474,7 +506,7 @@ class GenericTrainer(BaseTrainer):
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         
         with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(self.__config_to_json(), f, indent=4)
+            json.dump(self.config.to_settings_dict(secrets=False), f, indent=4)
 
     def __prune_backups(self, keep_count: int):
         """Remove old backups, keeping only the specified number"""
