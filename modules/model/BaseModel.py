@@ -1,7 +1,9 @@
 from abc import ABCMeta, abstractmethod
+from typing import Iterator, List
 from uuid import uuid4
 
 from modules.module.EMAModule import EMAModuleWrapper
+from torch.distributed.fsdp import StateDictType
 from modules.util.config.TrainConfig import TrainConfig
 from modules.util.enum.ModelType import ModelType
 from modules.util.modelSpec.ModelSpec import ModelSpec
@@ -35,12 +37,14 @@ class BaseModel(metaclass=ABCMeta):
     train_progress: TrainProgress
     model_spec: ModelSpec | None
     train_config: TrainConfig | None
+    fsdp_state_dict_type: StateDictType | None
 
     def __init__(
             self,
             model_type: ModelType,
     ):
         self.model_type = model_type
+        self._modules = {}  # Required for named_modules support
         self.parameters = None
         self.optimizer = None
         self.optimizer_state_dict = None
@@ -49,6 +53,18 @@ class BaseModel(metaclass=ABCMeta):
         self.train_progress = TrainProgress()
         self.model_spec = None
         self.train_config = None
+        self.fsdp_state_dict_type = None
+
+    def get_trainable_modules(self) -> List[torch.nn.Module]:
+        """Get list of trainable modules for FSDP wrapping"""
+        return []
+
+    def named_modules(self, *args, **kwargs) -> Iterator[tuple[str, torch.nn.Module]]:
+        """Get named modules for FSDP support"""
+        for name, module in self._modules.items():
+            yield name, module
+            for subname, submodule in module.named_modules(*args, **kwargs):
+                yield f"{name}.{subname}", submodule
 
     @abstractmethod
     def to(self, device: torch.device):

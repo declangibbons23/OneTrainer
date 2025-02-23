@@ -1,6 +1,7 @@
 from abc import ABCMeta, abstractmethod
 
 from modules.model.BaseModel import BaseModel
+from modules.modelSetup.mixin.FSDPMixin import FSDPMixin
 from modules.util.config.TrainConfig import TrainConfig, TrainEmbeddingConfig
 from modules.util.NamedParameterGroup import NamedParameterGroupCollection
 from modules.util.TimedActionMixin import TimedActionMixin
@@ -14,6 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 class BaseModelSetup(
     TimedActionMixin,
+    FSDPMixin,
     metaclass=ABCMeta,
 ):
     def __init__(

@@ -15,6 +15,7 @@ from modules.util.enum.AudioFormat import AudioFormat
 from modules.util.enum.ConfigPart import ConfigPart
 from modules.util.enum.DataType import DataType
 from modules.util.enum.EMAMode import EMAMode
+from modules.util.enum.FSDPConfig import FSDPShardingStrategy, FSDPBackwardPrefetch, FSDPStateDict
 from modules.util.enum.GradientCheckpointingMethod import GradientCheckpointingMethod
 from modules.util.enum.ImageFormat import ImageFormat
 from modules.util.enum.LearningRateScaler import LearningRateScaler
@@ -263,6 +264,15 @@ class TrainConfig(BaseConfig):
     enable_activation_offloading: bool
     layer_offload_fraction: float
     force_circular_padding: bool
+    
+    # FSDP settings
+    enable_fsdp: bool
+    fsdp_sharding_strategy: FSDPShardingStrategy
+    fsdp_backward_prefetch: FSDPBackwardPrefetch
+    fsdp_state_dict_type: FSDPStateDict
+    fsdp_offload_params: bool
+    fsdp_min_num_params: int
+    fsdp_num_gpus: int
 
     # data settings
     concept_file_name: str
@@ -738,6 +748,15 @@ class TrainConfig(BaseConfig):
         data.append(("enable_activation_offloading", True, bool, False))
         data.append(("layer_offload_fraction", 0.0, float, False))
         data.append(("force_circular_padding", False, bool, False))
+
+        # FSDP settings
+        data.append(("enable_fsdp", False, bool, False))
+        data.append(("fsdp_sharding_strategy", FSDPShardingStrategy.FULL_SHARD, FSDPShardingStrategy, False))
+        data.append(("fsdp_backward_prefetch", FSDPBackwardPrefetch.BACKWARD_PRE, FSDPBackwardPrefetch, False))
+        data.append(("fsdp_state_dict_type", FSDPStateDict.FULL_STATE_DICT, FSDPStateDict, False))
+        data.append(("fsdp_offload_params", False, bool, False))
+        data.append(("fsdp_min_num_params", 1e6, int, False))
+        data.append(("fsdp_num_gpus", 1, int, False))
 
         # data settings
         data.append(("concept_file_name", "training_concepts/concepts.json", str, False))

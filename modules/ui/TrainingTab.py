@@ -7,6 +7,7 @@ from modules.util.enum.AlignPropLoss import AlignPropLoss
 from modules.util.enum.AttentionMechanism import AttentionMechanism
 from modules.util.enum.DataType import DataType
 from modules.util.enum.EMAMode import EMAMode
+from modules.util.enum.FSDPConfig import FSDPShardingStrategy, FSDPBackwardPrefetch, FSDPStateDict
 from modules.util.enum.GradientCheckpointingMethod import GradientCheckpointingMethod
 from modules.util.enum.LearningRateScaler import LearningRateScaler
 from modules.util.enum.LearningRateScheduler import LearningRateScheduler
@@ -254,6 +255,38 @@ class TrainingTab:
         components.label(frame, 10, 0, "Clip Grad Norm",
                          tooltip="Clips the gradient norm. Leave empty to disable gradient clipping.")
         components.entry(frame, 10, 1, self.ui_state, "clip_grad_norm")
+
+        # FSDP settings
+        components.label(frame, 11, 0, "Enable FSDP",
+                         tooltip="Enable Fully Sharded Data Parallel training across multiple GPUs")
+        components.switch(frame, 11, 1, self.ui_state, "enable_fsdp")
+
+        components.label(frame, 12, 0, "FSDP Sharding Strategy",
+                         tooltip="Strategy for sharding model parameters, gradients, and optimizer states")
+        components.options(frame, 12, 1, [str(x) for x in list(FSDPShardingStrategy)], self.ui_state,
+                           "fsdp_sharding_strategy")
+
+        components.label(frame, 13, 0, "FSDP Backward Prefetch",
+                         tooltip="When to prefetch the next set of parameters")
+        components.options(frame, 13, 1, [str(x) for x in list(FSDPBackwardPrefetch)], self.ui_state,
+                           "fsdp_backward_prefetch")
+
+        components.label(frame, 14, 0, "FSDP State Dict Type",
+                         tooltip="How to save and load model state dictionaries")
+        components.options(frame, 14, 1, [str(x) for x in list(FSDPStateDict)], self.ui_state,
+                           "fsdp_state_dict_type")
+
+        components.label(frame, 15, 0, "FSDP Offload Params",
+                         tooltip="Offload parameters to CPU to save GPU memory")
+        components.switch(frame, 15, 1, self.ui_state, "fsdp_offload_params")
+
+        components.label(frame, 16, 0, "FSDP Min Num Params",
+                         tooltip="Minimum number of parameters for a layer to be wrapped in FSDP")
+        components.entry(frame, 16, 1, self.ui_state, "fsdp_min_num_params")
+
+        components.label(frame, 17, 0, "Number of GPUs",
+                         tooltip="Number of GPUs to use for training")
+        components.entry(frame, 17, 1, self.ui_state, "fsdp_num_gpus")
 
     def __create_base2_frame(self, master, row, video_training_enabled: bool = False):
         frame = ctk.CTkFrame(master=master, corner_radius=5)

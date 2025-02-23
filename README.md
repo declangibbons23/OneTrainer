@@ -1,132 +1,162 @@
 # OneTrainer
 
-OneTrainer is a one-stop solution for all your stable diffusion training needs.
+A unified trainer for various AI models.
 
-<a href="https://discord.gg/KwgcQd5scF"><img src="https://discord.com/api/guilds/1102003518203756564/widget.png" alt="OneTrainer Discord"/></a><br>
+## Multi-GPU Training
 
-## Features
+OneTrainer now supports distributed training across multiple GPUs using PyTorch's Fully Sharded Data Parallel (FSDP) library. This feature enables efficient training of large models by sharding model parameters, gradients, and optimizer states across multiple GPUs.
 
-- **Supported models**: FLUX.1, Stable Diffusion 1.5, 2.0, 2.1, 3.0, 3.5, SDXL, Würstchen-v2, Stable Cascade,
-  PixArt-Alpha, PixArt-Sigma, Sana, Hunyuan Video and inpainting models
-- **Model formats**: diffusers and ckpt models
-- **Training methods**: Full fine-tuning, LoRA, embeddings
-- **Masked Training**: Let the training focus on just certain parts of the samples.
-- **Automatic backups**: Fully back up your training progress regularly during training. This includes all information
-  to seamlessly continue training.
-- **Image augmentation**: Apply random transforms such as rotation, brightness, contrast or saturation to each image
-  sample to quickly create a more diverse dataset.
-- **Tensorboard**: A simple tensorboard integration to track the training progress.
-- **Multiple prompts per image**: Train the model on multiple different prompts per image sample.
-- **Noise Scheduler Rescaling**: From the paper
-  [Common Diffusion Noise Schedules and Sample Steps are Flawed](https://arxiv.org/abs/2305.08891)
-- **EMA**: Train your own EMA model. Optionally keep EMA weights in CPU memory to reduce VRAM usage.
-- **Aspect Ratio Bucketing**: Automatically train on multiple aspect ratios at a time. Just select the target
-  resolutions, buckets are created automatically.
-- **Multi Resolution Training**: Train multiple resolutions at the same time.
-- **Dataset Tooling**: Automatically caption your dataset using BLIP, BLIP2 and WD-1.4, or create masks for masked
-  training using ClipSeg or Rembg.
-- **Model Tooling**: Convert between different model formats from a simple UI.
-- **Sampling UI**: Sample the model during training without switching to a different application.
-- **AlignProp**: A Reinforcement Learning method for diffusion networks from the paper
-  [Aligning Text-to-Image Diffusion Models With Reward Backpropagation](https://arxiv.org/abs/2310.03739)
+### Requirements
 
-![OneTrainerGUI.gif](resources/images/OneTrainerGUI.gif)
+- At least 2 NVIDIA GPUs with CUDA support
+- PyTorch with CUDA support
+- NCCL backend for distributed training
 
-## Installation
+### Using Multi-GPU Training
 
-Installing OneTrainer requires Python >=3.10 and <3.13. You can download Python
-here https://www.python.org/downloads/windows/.
-Then follow these steps:
+There are three ways to enable multi-GPU training:
 
-Automatic installation
+1. **Using the GUI**:
+   - In the Training tab, enable "FSDP" under the base settings
+   - Configure FSDP settings:
+     - Sharding Strategy: Choose how to shard model parameters (FULL_SHARD, SHARD_GRAD_OP, NO_SHARD)
+     - Backward Prefetch: Configure parameter prefetching (BACKWARD_PRE, BACKWARD_POST, NO_PREFETCH)
+     - State Dict Type: Choose state dict handling (FULL_STATE_DICT, SHARDED_STATE_DICT, LOCAL_STATE_DICT)
+     - Offload Params: Enable CPU offloading to save GPU memory
+     - Min Num Params: Minimum number of parameters for a layer to be wrapped in FSDP
+     - Number of GPUs: Number of GPUs to use for training
 
-- Clone the repository `git clone https://github.com/Nerogar/OneTrainer.git`
-- Run:
-    - Windows: `install.bat`
-    - Unix based systems: `install.sh`
+2. **Using the Command Line (with GUI)**:
+   - Windows: Run `start-distributed.bat` to automatically launch distributed training
+   - Linux with GUI: Run `./start-distributed.sh` to automatically launch distributed training
+   - Both scripts will:
+     - Check for CUDA availability
+     - Verify multiple GPUs are available
+     - Launch training processes across all available GPUs
+     - Handle proper process initialization and cleanup
 
-Manual installation
+   Note for Linux users: Make sure to make the script executable:
+   ```bash
+   chmod +x start-distributed.sh
+   ```
 
-- Clone the repository `git clone https://github.com/Nerogar/OneTrainer.git`
-- Navigate into the cloned directory `cd OneTrainer`
-- Set up a virtual environment `python -m venv venv`
-- Activate the new venv:
-    - Windows: `venv\scripts\activate`
-    - Unix based systems: `source venv/bin/activate`
-- Install the requirements `pip install -r requirements.txt`
+3. **Headless Training (for Servers without GUI)**:
+   - Run `./start-distributed-headless.sh` to launch distributed training without GUI
+   - Make the script executable first:
+   ```bash
+   chmod +x start-distributed-headless.sh
+   ```
+   
+   The headless mode:
+   - Runs without requiring X11 or display server
+   - Automatically configures FSDP settings
+   - Uses all available GPUs by default
+   - Supports the same distributed features as GUI mode
 
-In some linux distribution, you might need to install libGL, for instance on ubuntu you will need to run:
-```
-sudo apt-get update
-sudo apt-get install libgl1
-```
+### Important Notes
 
-## Updating
+1. **Data Handling**:
+   - Training data is automatically sharded across GPUs
+   - Each GPU processes its own portion of the data
+   - Latent caching is GPU-specific and managed automatically
 
-Automatic update
+2. **Memory Usage**:
+   - Model parameters are sharded across GPUs to reduce memory usage
+   - Gradients and optimizer states are also sharded
+   - CPU offloading can be enabled to further reduce GPU memory usage
 
-- Run `update.bat` or `update.sh`
+3. **Saving and Loading**:
+   - Model checkpoints are automatically handled
+   - Only the primary GPU saves checkpoints and logs
+   - Different state dict types are supported for flexibility
 
-Manual update
+4. **Performance Tips**:
+   - Adjust batch size per GPU (total batch size is divided by number of GPUs)
+   - Use gradient checkpointing with FSDP for larger models
+   - Enable CPU offloading if needed, but note it may impact training speed
 
-- Pull changes `git pull`
-- Activate the venv `venv\scripts\activate`
-- Re-Install all requirements `pip install -r requirements.txt --force-reinstall`
+### Troubleshooting
 
-## Usage
+1. **Memory Issues**:
+   - Try reducing batch size
+   - Enable gradient checkpointing
+   - Enable CPU offloading
+   - Use a more aggressive sharding strategy
 
-To start the UI, run `start-ui.bat`. [You can find a quick start guide here.](docs/QuickStartGuide.md), and a more
-detailed overview of different topics [here](docs/Overview.md).
+2. **Performance Issues**:
+   - Check GPU utilization
+   - Adjust batch size and gradient accumulation steps
+   - Try different backward prefetch strategies
 
-If you need more control, OneTrainer supports two modes of operation. Command line only, and a UI.
-All commands need to be run inside the active venv created during installation.
+3. **Common Errors**:
+   - "CUDA out of memory": Reduce batch size or enable more aggressive memory optimizations
+   - "NCCL error": Check GPU connectivity and NCCL installation
+   - "Process group initialization failed": Check if all GPUs are available and CUDA is working
 
-All functionality is split into different scrips located in the `scripts` directory. This currently includes:
+For more details on specific settings and advanced configurations, please refer to the PyTorch FSDP documentation.
 
-- `train.py` The central training script
-- `train_ui.py` A UI for training
-- `caption_ui.py` A UI for manual or automatic captioning and mask creation for masked training
-- `convert_model_ui.py` A UI for model conversions
-- `convert_model.py` A utility to convert between different model formats
-- `sample.py` A utility to sample any model
-- `create_train_files.py` A utility to create files needed when training only from the CLI
-- `generate_captions.py` A utility to automatically create captions for your dataset
-- `generate_masks.py` A utility to automatically create masks for your dataset
-- `calculate_loss.py` A utility to calculate the training loss of every image in your dataset
+### Manual Multi-GPU Launch (Advanced)
 
-To learn more about the different parameters, execute `<script-name> -h`. For example `python scripts\train.py -h`
+For advanced users who want to manually control the distributed training process:
 
-If you are on Mac or Linux, read [the launch script documentation](LAUNCH-SCRIPTS.md) for detailed information about how
-to run OneTrainer and its various scripts on your system.
+1. **Linux**:
+   ```bash
+   # Launch with torch.distributed.launch
+   python -m torch.distributed.launch --nproc_per_node=NUM_GPUS scripts/launch_distributed.py [args...]
+   
+   # Or using torchrun (recommended)
+   torchrun --nproc_per_node=NUM_GPUS scripts/launch_distributed.py [args...]
+   ```
 
-## Contributing
+2. **Windows**:
+   ```cmd
+   # Using torchrun
+   torchrun --nproc_per_node=NUM_GPUS scripts/launch_distributed.py [args...]
+   ```
 
-Contributions are always welcome in any form. You can open issues, participate in discussions, or even open pull
-requests for new or improved functionality. You can find more information [here](docs/Contributing.md).
+Replace `NUM_GPUS` with the number of GPUs you want to use. For headless environments, use `scripts/train_headless.py` instead of `launch_distributed.py`.
 
-Before you start looking at the code, I recommend reading about the project structure [here](docs/ProjectStructure.md).
-For in depth discussions, you should consider joining the [Discord](https://discord.gg/KwgcQd5scF) server.
+The training script will automatically:
+- Initialize the distributed process group
+- Configure FSDP parameters
+- Shard data and model across GPUs
+- Handle distributed caching
+- Manage checkpoints and logging
 
-You also **NEED** to **install the required developer dependencies** for your current user and enable the Git commit
-hooks, via the following commands (works on all platforms; Windows, Linux and Mac):
+### Environment Variables
 
-```sh
-pip install -r requirements-dev.txt
-pre-commit install
-```
+You can customize the distributed training behavior using these environment variables:
 
-(Be sure to run those commands *without activating your venv or Conda environment,*
-since [pre-commit](https://pre-commit.com/) is supposed to be installed outside any environment.)
+- `MASTER_ADDR`: Address of the master node (default: localhost)
+- `MASTER_PORT`: Port for distributed training (default: 12355)
+- `WORLD_SIZE`: Total number of processes (set automatically)
+- `LOCAL_RANK`: Local rank of the process (set automatically)
+- `RANK`: Global rank of the process (set automatically)
 
-Now all of your commits will automatically be verified for common errors and code style issues, so that code
-reviewers can focus on the architecture of your changes without wasting time on style/formatting issues, thus
-greatly improving the chances that your pull request will be accepted quickly and effortlessly.
+These variables are handled automatically by the launch scripts but can be manually set if needed.
 
-## Related Projects
+### Server Deployment Tips
 
-- **[MGDS](https://github.com/Nerogar/mgds)**: A custom dataset implementation for Pytorch that is built around the idea
-  of a node based graph.
-- **[StableTuner](https://github.com/devilismyfriend/StableTuner)**: Another training application for Stable Diffusion.
-  OneTrainer takes a lot of inspiration from StableTuner and wouldn't exist without it.
-- **[Visions of Chaos](https://softology.pro/voc.htm)**: A collection of machine learning tools that also includes
-  OneTrainer.
+When running on headless servers:
+
+1. **Display Issues**:
+   - If you see "couldn't connect to display" errors:
+     * For XRDP users: Make sure you're logged into your desktop session
+     * The script will attempt to auto-detect your XRDP display
+     * If auto-detection fails, you can manually set: `export DISPLAY=:N` (where N is your display number)
+     * If display issues persist, use headless mode with `./start-distributed-headless.sh`
+   - The GUI mode requires X11 server:
+     * Works with local X11 server
+     * Works with XRDP + XFCE/other desktop environments
+     * Works with X11 forwarding over SSH (`ssh -X` or `ssh -Y`)
+   - Headless mode works without any display requirements
+
+2. **Resource Management**:
+   - Monitor GPU memory usage with `nvidia-smi`
+   - Use `htop` or `top` to monitor CPU and memory usage
+   - Consider using `tmux` or `screen` to keep training running after SSH disconnection
+
+3. **Performance Optimization**:
+   - Set appropriate batch sizes based on available GPU memory
+   - Monitor network bandwidth between GPUs with `nvidia-smi nvlink`
+   - Use `CUDA_VISIBLE_DEVICES` to control which GPUs are used
