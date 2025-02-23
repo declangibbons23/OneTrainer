@@ -66,14 +66,14 @@ class GenericTrainer(BaseTrainer):
     def __init__(self, config: TrainConfig, callbacks: TrainCallbacks, commands: TrainCommands):
         super().__init__(config, callbacks, commands)
 
-        # Initialize process group for FSDP if enabled
-        if config.enable_fsdp:
+        # Initialize process group for FSDP if in distributed mode
+        if config.enable_fsdp and os.environ.get('RANK') is not None:
             if not torch.distributed.is_initialized():
                 torch.distributed.init_process_group(backend="nccl")
                 torch.cuda.set_device(torch.distributed.get_rank())
 
-        # Only primary GPU should create tensorboard
-        if not config.enable_fsdp or torch.distributed.get_rank() == 0:
+        # Only primary GPU (or non-distributed mode) should create tensorboard
+        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             tensorboard_log_dir = os.path.join(config.workspace_dir, "tensorboard")
             os.makedirs(Path(tensorboard_log_dir).absolute(), exist_ok=True)
             self.tensorboard = SummaryWriter(os.path.join(tensorboard_log_dir, f"{config.save_filename_prefix}{get_string_timestamp()}"))
@@ -85,8 +85,8 @@ class GenericTrainer(BaseTrainer):
         self.grad_hook_handles = []
 
     def start(self):
-        # Only primary GPU should save config
-        if not self.config.enable_fsdp or torch.distributed.get_rank() == 0:
+        # Only primary GPU (or non-distributed mode) should save config
+        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             self.__save_config_to_workspace()
 
         if self.config.clear_cache_before_training and self.config.latent_caching:
@@ -155,8 +155,8 @@ class GenericTrainer(BaseTrainer):
             self.model, self.model.train_progress
         )
 
-        # Scale batch size by world size for FSDP
-        if self.config.enable_fsdp:
+        # Scale batch size by world size in distributed mode
+        if torch.distributed.is_initialized():
             world_size = torch.distributed.get_world_size()
             self.config.batch_size = self.config.batch_size // world_size
 
@@ -199,8 +199,8 @@ class GenericTrainer(BaseTrainer):
                 torch.clear_autocast_cache()
                 self.model.optimizer.eval()
 
-            # Only primary GPU should save the model
-            if not self.config.enable_fsdp or torch.distributed.get_rank() == 0:
+        # Only primary GPU (or non-distributed mode) should save the model
+        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
                 self.callbacks.on_update_status("saving the final model")
 
                 if self.model.ema:
@@ -240,8 +240,8 @@ class GenericTrainer(BaseTrainer):
             if self.config.enable_fsdp:
                 self.model_setup.cleanup_fsdp()
 
-        # Close tensorboard only on primary GPU
-        if not self.config.enable_fsdp or torch.distributed.get_rank() == 0:
+        # Close tensorboard only on primary GPU (or non-distributed mode)
+        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             if hasattr(self, 'tensorboard'):
                 self.tensorboard.close()
 
@@ -252,8 +252,8 @@ class GenericTrainer(BaseTrainer):
             handle.remove()
 
     def backup(self, train_progress: TrainProgress, print_msg: bool = True, print_cb: Callable[[str], None] = print):
-        # Skip backup on non-primary GPUs in distributed mode
-        if self.config.enable_fsdp and torch.distributed.get_rank() != 0:
+        # Skip backup on non-primary GPUs
+        if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
             return
 
         torch_gc()
@@ -313,8 +313,8 @@ class GenericTrainer(BaseTrainer):
         torch_gc()
 
     def save(self, train_progress: TrainProgress, print_msg: bool = True, print_cb: Callable[[str], None] = print):
-        # Skip save on non-primary GPUs in distributed mode
-        if self.config.enable_fsdp and torch.distributed.get_rank() != 0:
+        # Skip save on non-primary GPUs
+        if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
             return
 
         torch_gc()
@@ -410,8 +410,8 @@ class GenericTrainer(BaseTrainer):
         self.model.train_progress.global_step += 1
         self.model.train_progress.epoch_step += 1
 
-        # Log metrics (only on primary GPU)
-        if not self.config.enable_fsdp or torch.distributed.get_rank() == 0:
+        # Log metrics (only on primary GPU or non-distributed mode)
+        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             self.tensorboard.add_scalar(
                 "loss/train_step",
                 loss.item(),
@@ -545,8 +545,8 @@ class GenericTrainer(BaseTrainer):
                 accumulated_loss_per_concept[concept_seed] = accumulated_loss_per_concept.get(concept_seed, 0) + loss
                 concept_counts[concept_seed] = concept_counts.get(concept_seed, 0) + 1
 
-            # Only log validation metrics on primary GPU
-            if not self.config.enable_fsdp or torch.distributed.get_rank() == 0:
+            # Only log validation metrics on primary GPU or non-distributed mode
+            if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
                 for concept_seed, total_loss in accumulated_loss_per_concept.items():
                     average_loss = total_loss / concept_counts[concept_seed]
                     self.tensorboard.add_scalar(
