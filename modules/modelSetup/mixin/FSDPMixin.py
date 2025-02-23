@@ -31,10 +31,9 @@ class FSDPMixin:
         if not config.enable_fsdp:
             return
 
-        # Initialize process group
+        # Process group should already be initialized by GenericTrainer
         if not torch.distributed.is_initialized():
-            torch.distributed.init_process_group(backend="nccl")
-            torch.cuda.set_device(torch.distributed.get_rank())
+            raise RuntimeError("Process group not initialized. FSDP requires distributed training.")
 
         # Configure mixed precision
         mp_policy = None

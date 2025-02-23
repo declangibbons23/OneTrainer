@@ -137,8 +137,11 @@ class GenericTrainer(BaseTrainer):
 
         self.callbacks.on_update_status("running model setup")
 
-        # Set up FSDP first if enabled, before any other setup
-        if self.config.enable_fsdp:
+        # Set up FSDP first if enabled and in distributed mode
+        if self.config.enable_fsdp and os.environ.get('RANK') is not None:
+            if not torch.distributed.is_initialized():
+                torch.distributed.init_process_group(backend="nccl")
+                torch.cuda.set_device(torch.distributed.get_rank())
             self.model_setup.setup_fsdp(self.model, self.config)
 
         self.model_setup.setup_optimizations(self.model, self.config)
