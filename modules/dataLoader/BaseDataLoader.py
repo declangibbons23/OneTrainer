@@ -26,15 +26,22 @@ class BaseDataLoader(metaclass=ABCMeta):
     def _create_mgds(
             self,
             config,
-            concepts,
-            settings,
-            definition,
-            state,
-            seed=-1,
-            initial_epoch=0,
-            initial_epoch_sample=0,
+            modules,
+            train_progress=None,
+            is_validation=False,
     ) -> MGDS | DistributedMGDS:
         """Create MGDS instance with distributed support"""
+        # Filter out None modules
+        modules = [m for m in modules if m is not None]
+
+        # Flatten list of lists into single list
+        flattened_modules = []
+        for module in modules:
+            if isinstance(module, list):
+                flattened_modules.extend(module)
+            else:
+                flattened_modules.append(module)
+
         if config.enable_fsdp and torch.distributed.is_initialized():
             # Use existing process group initialized by GenericTrainer
             world_size = torch.distributed.get_world_size()
@@ -43,16 +50,16 @@ class BaseDataLoader(metaclass=ABCMeta):
             # Create distributed MGDS
             ds = DistributedMGDS(
                 device=torch.device(config.train_device),
-                concepts=concepts,
-                settings=settings,
-                definition=definition,
+                concepts=config.concepts,
+                settings={},
+                definition=flattened_modules,
                 batch_size=config.batch_size,
-                state=state,
+                state=train_progress.state if train_progress else None,
                 world_size=world_size,
                 rank=rank,
-                seed=seed,
-                initial_epoch=initial_epoch,
-                initial_epoch_sample=initial_epoch_sample,
+                seed=-1,
+                initial_epoch=0,
+                initial_epoch_sample=0,
             )
 
             # Create distributed data loader
@@ -66,14 +73,14 @@ class BaseDataLoader(metaclass=ABCMeta):
             # Create regular MGDS for single GPU
             ds = MGDS(
                 device=torch.device(config.train_device),
-                concepts=concepts,
-                settings=settings,
-                definition=definition,
+                concepts=config.concepts,
+                settings={},
+                definition=flattened_modules,
                 batch_size=config.batch_size,
-                state=state,
-                seed=seed,
-                initial_epoch=initial_epoch,
-                initial_epoch_sample=initial_epoch_sample,
+                state=train_progress.state if train_progress else None,
+                seed=-1,
+                initial_epoch=0,
+                initial_epoch_sample=0,
             )
 
             # Create regular data loader

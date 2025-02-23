@@ -40,6 +40,92 @@ import torch
 class DataLoaderText2ImageMixin:
     """Mixin class for text-to-image data loaders with distributed support"""
 
+    def _enumerate_input_modules(self, config):
+        """Create input enumeration modules"""
+        return self._create_pipeline_definition(
+            config=config,
+            cache_dir=config.cache_dir,
+            image_paths=[concept.image for concept in config.concepts],
+            text_paths=[concept.text for concept in config.concepts],
+            mask_paths=[concept.mask for concept in config.concepts] if config.masked_training else None,
+            conditioning_image_paths=[concept.conditioning_image for concept in config.concepts] if config.model_type.has_conditioning_image_input() else None,
+        )
+
+    def _load_input_modules(self, config, train_dtype, add_embeddings_to_prompt):
+        """Create input loading modules"""
+        modules = []
+
+        # Add text processing modules
+        if add_embeddings_to_prompt:
+            modules.extend([
+                SelectRandomText(),
+                CapitalizeTags(),
+                ShuffleTags(),
+                DropTags(),
+            ])
+
+        # Add image processing modules
+        modules.extend([
+            LoadImage(),
+            GetFilename(),
+        ])
+
+        return modules
+
+    def _mask_augmentation_modules(self, config):
+        """Create mask augmentation modules"""
+        if config.masked_training:
+            return [
+                RandomMaskRotateCrop(),
+                RandomCircularMaskShrink(),
+                RandomLatentMaskRemove(),
+            ]
+        return []
+
+    def _aspect_bucketing_in(self, config, bucket_side_length):
+        """Create aspect bucketing input modules"""
+        if config.aspect_ratio_bucketing:
+            return [
+                CalcAspect(),
+                AspectBucketing(bucket_side_length=bucket_side_length),
+                InlineAspectBatchSorting(),
+            ]
+        return []
+
+    def _crop_modules(self, config):
+        """Create crop modules"""
+        return [ScaleCropImage()]
+
+    def _augmentation_modules(self, config):
+        """Create augmentation modules"""
+        return [
+            RandomRotate(),
+            RandomFlip(),
+            RandomBrightness(),
+            RandomContrast(),
+            RandomHue(),
+            RandomSaturation(),
+        ]
+
+    def _inpainting_modules(self, config):
+        """Create inpainting modules"""
+        if config.model_type.has_conditioning_image_input():
+            return [GenerateImageLike()]
+        return []
+
+    def _output_modules_from_out_names(self, output_names, sort_names, config, before_cache_image_fun, use_conditioning_image, vae, autocast_context, train_dtype):
+        """Create output modules from output names"""
+        modules = []
+
+        # Add data mapping module
+        modules.append(MapData(output_names))
+
+        # Add selection module
+        if use_conditioning_image:
+            modules.append(SelectInput())
+
+        return modules
+
     def _create_disk_cache(self, config, cache_dir: str) -> DiskCache | DistributedDiskCache:
         """Create appropriate disk cache based on FSDP setting"""
         if config.enable_fsdp:
