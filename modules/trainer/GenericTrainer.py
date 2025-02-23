@@ -171,6 +171,16 @@ class GenericTrainer(BaseTrainer):
                 self.model, self.model.train_progress, is_validation=True
             )
 
+    def train(self):
+        """Train the model"""
+        try:
+            while not self.should_stop():
+                self.train_step()
+        except KeyboardInterrupt:
+            print("\nInterrupted by user")
+        finally:
+            self.end()
+
     def end(self):
         if self.one_step_trained:
             self.model.to(self.temp_device)
@@ -363,6 +373,121 @@ class GenericTrainer(BaseTrainer):
                 self.model.ema.copy_temp_to(self.parameters)
 
         torch_gc()
+
+    def should_stop(self) -> bool:
+        """Check if training should stop"""
+        if self.commands.stop_training:
+            return True
+        
+        if self.model.train_progress.global_step >= self.config.max_train_steps:
+            return True
+            
+        return False
+
+    def train_step(self):
+        """Execute one training step"""
+        self.model_setup.setup_train_device(self.model, self.config)
+        self.model.train()
+
+        # Get next batch
+        batch = next(iter(self.data_loader.get_data_loader()))
+
+        # Forward pass
+        model_output_data = self.model_setup.predict(
+            self.model, batch, self.config, self.model.train_progress)
+
+        # Calculate loss
+        loss = self.model_setup.calculate_loss(
+            self.model, batch, model_output_data, self.config)
+
+        # Backward pass
+        self.model_setup.backward_pass(self.model, loss, self.config)
+
+        # Update parameters
+        self.model_setup.optimizer_step(self.model, self.config)
+
+        # Update progress
+        self.model.train_progress.global_step += 1
+        self.model.train_progress.epoch_step += 1
+
+        # Log metrics (only on primary GPU)
+        if not self.config.enable_fsdp or torch.distributed.get_rank() == 0:
+            self.tensorboard.add_scalar(
+                "loss/train_step",
+                loss.item(),
+                self.model.train_progress.global_step
+            )
+
+        # Validate if needed
+        self.__validate(self.model.train_progress)
+
+        # Set one_step_trained flag
+        self.one_step_trained = True
+
+    def __needs_gc(self, train_progress: TrainProgress) -> bool:
+        """Check if garbage collection is needed"""
+        return self.repeating_action_needed(
+            "gc",
+            self.config.gc_interval,
+            self.config.gc_unit,
+            train_progress,
+            start_at_zero=False,
+        )
+
+    def __needs_validate(self, train_progress: TrainProgress) -> bool:
+        """Check if validation is needed"""
+        return self.config.validation and self.repeating_action_needed(
+            "validation",
+            self.config.validation_interval,
+            self.config.validation_unit,
+            train_progress,
+            start_at_zero=False,
+        )
+
+    def __save_config_to_workspace(self):
+        """Save training configuration to workspace"""
+        config_path = os.path.join(self.config.workspace_dir, "config.json")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config.to_json(), f, indent=4)
+
+    def __save_backup_config(self, backup_path: str):
+        """Save configuration for backup"""
+        config_path = os.path.join(backup_path, "config.json")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config.to_json(), f, indent=4)
+
+    def __prune_backups(self, keep_count: int):
+        """Remove old backups, keeping only the specified number"""
+        backup_dir = os.path.join(self.config.workspace_dir, "backup")
+        if not os.path.exists(backup_dir):
+            return
+
+        backups = []
+        for entry in os.scandir(backup_dir):
+            if entry.is_dir() and entry.name.endswith("-backup"):
+                backups.append(entry)
+
+        backups.sort(key=lambda x: os.path.getctime(x.path), reverse=True)
+
+        for backup in backups[keep_count:]:
+            try:
+                shutil.rmtree(backup.path)
+            except Exception:
+                print(f"Could not delete backup {backup.path}")
+
+    def __clear_cache(self):
+        """Clear cache directory"""
+        if hasattr(self.config, "cache_dir") and self.config.cache_dir:
+            cache_dir = self.config.cache_dir
+            if os.path.exists(cache_dir):
+                try:
+                    shutil.rmtree(cache_dir)
+                except Exception:
+                    print(f"Could not clear cache directory {cache_dir}")
 
     def __validate(self, train_progress: TrainProgress):
         if self.__needs_validate(train_progress):
