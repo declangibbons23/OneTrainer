@@ -9,9 +9,11 @@ import torch
 class BaseDataLoader(metaclass=ABCMeta):
     """Base class for all data loaders"""
 
-    def __init__(self):
+    def __init__(self, train_device: torch.device = None, temp_device: torch.device = None):
         self._ds = None
         self._dl = None
+        self.train_device = train_device
+        self.temp_device = temp_device
 
     @abstractmethod
     def get_data_set(self) -> MGDS | DistributedMGDS:
@@ -33,14 +35,10 @@ class BaseDataLoader(metaclass=ABCMeta):
             initial_epoch_sample=0,
     ) -> MGDS | DistributedMGDS:
         """Create MGDS instance with distributed support"""
-        if config.enable_fsdp:
-            # Initialize process group if not already initialized
-            if not torch.distributed.is_initialized():
-                torch.distributed.init_process_group(backend="nccl")
-                torch.cuda.set_device(torch.distributed.get_rank())
-
-            world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
-            rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+        if config.enable_fsdp and torch.distributed.is_initialized():
+            # Use existing process group initialized by GenericTrainer
+            world_size = torch.distributed.get_world_size()
+            rank = torch.distributed.get_rank()
 
             # Create distributed MGDS
             ds = DistributedMGDS(

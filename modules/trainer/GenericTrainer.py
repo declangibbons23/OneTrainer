@@ -74,11 +74,24 @@ class GenericTrainer(BaseTrainer):
 
         # Only primary GPU (or non-distributed mode) should create tensorboard
         if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-            tensorboard_log_dir = os.path.join(config.workspace_dir, "tensorboard")
-            os.makedirs(Path(tensorboard_log_dir).absolute(), exist_ok=True)
-            self.tensorboard = SummaryWriter(os.path.join(tensorboard_log_dir, f"{config.save_filename_prefix}{get_string_timestamp()}"))
-            if config.tensorboard:
-                super()._start_tensorboard()
+            try:
+                tensorboard_log_dir = os.path.join(config.workspace_dir, "tensorboard")
+                os.makedirs(Path(tensorboard_log_dir).absolute(), exist_ok=True)
+                self.tensorboard = SummaryWriter(os.path.join(tensorboard_log_dir, f"{config.save_filename_prefix}{get_string_timestamp()}"))
+                if config.tensorboard:
+                    # Try ports 6006-6015
+                    port = config.tensorboard_port
+                    for port_attempt in range(6006, 6016):
+                        try:
+                            config.tensorboard_port = port_attempt
+                            super()._start_tensorboard()
+                            break
+                        except Exception as e:
+                            if port_attempt == 6015:  # Last attempt
+                                print(f"Could not start TensorBoard on any port (6006-6015): {e}")
+                            continue
+            except Exception as e:
+                print(f"Error initializing TensorBoard: {e}")
 
         self.model = None
         self.one_step_trained = False
