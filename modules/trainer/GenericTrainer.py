@@ -17,6 +17,7 @@ from modules.trainer.BaseTrainer import BaseTrainer
 from modules.util import create, path_util
 from modules.util.callbacks.TrainCallbacks import TrainCallbacks
 from modules.util.commands.TrainCommands import TrainCommands
+from modules.util.config.ConceptConfig import ConceptConfig
 from modules.util.config.SampleConfig import SampleConfig
 from modules.util.config.TrainConfig import TrainConfig
 from modules.util.dtype_util import create_grad_scaler, enable_grad_scaling
