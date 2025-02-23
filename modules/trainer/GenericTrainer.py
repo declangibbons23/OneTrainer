@@ -182,41 +182,51 @@ class GenericTrainer(BaseTrainer):
             self.end()
 
     def end(self):
-        if self.one_step_trained:
-            self.model.to(self.temp_device)
+        try:
+            if self.one_step_trained and self.model is not None:
+                self.model.to(self.temp_device)
 
-            if self.config.backup_before_save:
-                # Only primary GPU should create backup
-                if not self.config.enable_fsdp or torch.distributed.get_rank() == 0:
-                    self.backup(self.model.train_progress)
+                if self.config.backup_before_save:
+                    # Only primary GPU should create backup
+                    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+                        self.backup(self.model.train_progress)
 
-            # Clean up FSDP if enabled
-            if self.config.enable_fsdp:
-                self.model_setup.cleanup_fsdp()
-
-            # Special case for schedule-free optimizers.
-            if self.config.optimizer.optimizer.is_schedule_free:
-                torch.clear_autocast_cache()
-                self.model.optimizer.eval()
-
-        # Only primary GPU (or non-distributed mode) should save the model
-        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-                self.callbacks.on_update_status("saving the final model")
-
-                if self.model.ema:
-                    self.model.ema.copy_ema_to(self.parameters, store_temp=False)
-                if os.path.isdir(self.config.output_model_destination) and self.config.output_model_format.is_single_file():
-                    save_path = os.path.join(
-                        self.config.output_model_destination,
-                        f"{self.config.save_filename_prefix}{get_string_timestamp()}{self.config.output_model_format.file_extension()}"
-                    )
-                else:
-                    save_path = self.config.output_model_destination
-                print("Saving " + save_path)
-
-                # Handle FSDP state dict type
+                # Clean up FSDP if enabled
                 if self.config.enable_fsdp:
-                    with FSDP.state_dict_type(self.model, StateDictType[self.config.fsdp_state_dict_type]):
+                    self.model_setup.cleanup_fsdp()
+
+                # Special case for schedule-free optimizers.
+                if self.config.optimizer.optimizer.is_schedule_free:
+                    torch.clear_autocast_cache()
+                    self.model.optimizer.eval()
+
+                # Only primary GPU (or non-distributed mode) should save the model
+                if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+                    self.callbacks.on_update_status("saving the final model")
+
+                    if hasattr(self.model, 'ema') and self.model.ema is not None:
+                        self.model.ema.copy_ema_to(self.parameters, store_temp=False)
+
+                    if os.path.isdir(self.config.output_model_destination) and self.config.output_model_format.is_single_file():
+                        save_path = os.path.join(
+                            self.config.output_model_destination,
+                            f"{self.config.save_filename_prefix}{get_string_timestamp()}{self.config.output_model_format.file_extension()}"
+                        )
+                    else:
+                        save_path = self.config.output_model_destination
+                    print("Saving " + save_path)
+
+                    # Handle FSDP state dict type
+                    if self.config.enable_fsdp:
+                        with FSDP.state_dict_type(self.model, StateDictType[self.config.fsdp_state_dict_type]):
+                            self.model_saver.save(
+                                model=self.model,
+                                model_type=self.config.model_type,
+                                output_model_format=self.config.output_model_format,
+                                output_model_destination=save_path,
+                                dtype=self.config.output_dtype.torch_dtype()
+                            )
+                    else:
                         self.model_saver.save(
                             model=self.model,
                             model_type=self.config.model_type,
@@ -224,32 +234,27 @@ class GenericTrainer(BaseTrainer):
                             output_model_destination=save_path,
                             dtype=self.config.output_dtype.torch_dtype()
                         )
-                else:
-                    self.model_saver.save(
-                        model=self.model,
-                        model_type=self.config.model_type,
-                        output_model_format=self.config.output_model_format,
-                        output_model_destination=save_path,
-                        dtype=self.config.output_dtype.torch_dtype()
-                    )
 
-        elif self.model is not None:
-            self.model.to(self.temp_device)
-            
-            # Clean up FSDP if enabled
-            if self.config.enable_fsdp:
-                self.model_setup.cleanup_fsdp()
+            elif self.model is not None:
+                self.model.to(self.temp_device)
+                
+                # Clean up FSDP if enabled
+                if self.config.enable_fsdp:
+                    self.model_setup.cleanup_fsdp()
 
-        # Close tensorboard only on primary GPU (or non-distributed mode)
-        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-            if hasattr(self, 'tensorboard'):
-                self.tensorboard.close()
+            # Close tensorboard only on primary GPU (or non-distributed mode)
+            if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+                if hasattr(self, 'tensorboard'):
+                    self.tensorboard.close()
 
-            if self.config.tensorboard:
-                super()._stop_tensorboard()
+                if self.config.tensorboard:
+                    super()._stop_tensorboard()
 
-        for handle in self.grad_hook_handles:
-            handle.remove()
+            for handle in self.grad_hook_handles:
+                handle.remove()
+        except Exception as e:
+            print(f"Error during end: {e}")
+            traceback.print_exc()
 
     def backup(self, train_progress: TrainProgress, print_msg: bool = True, print_cb: Callable[[str], None] = print):
         # Skip backup on non-primary GPUs
@@ -329,7 +334,7 @@ class GenericTrainer(BaseTrainer):
             print_cb("Saving " + save_path)
 
         try:
-            if self.model.ema:
+            if hasattr(self.model, 'ema') and self.model.ema is not None:
                 self.model.ema.copy_ema_to(self.parameters, store_temp=True)
 
             # Special case for schedule-free optimizers.
@@ -369,7 +374,7 @@ class GenericTrainer(BaseTrainer):
                 traceback.print_exc()
                 print("Could not delete partial save")
         finally:
-            if self.model.ema:
+            if hasattr(self.model, 'ema') and self.model.ema is not None:
                 self.model.ema.copy_temp_to(self.parameters)
 
         torch_gc()
@@ -444,13 +449,24 @@ class GenericTrainer(BaseTrainer):
             start_at_zero=False,
         )
 
+    def __config_to_json(self) -> dict:
+        """Convert config to JSON-serializable dict"""
+        config_dict = {}
+        for key, value in vars(self.config).items():
+            if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
+                config_dict[key] = value
+            else:
+                # Convert non-serializable types to string representation
+                config_dict[key] = str(value)
+        return config_dict
+
     def __save_config_to_workspace(self):
         """Save training configuration to workspace"""
         config_path = os.path.join(self.config.workspace_dir, "config.json")
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         
         with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(self.config.to_json(), f, indent=4)
+            json.dump(self.__config_to_json(), f, indent=4)
 
     def __save_backup_config(self, backup_path: str):
         """Save configuration for backup"""
@@ -458,7 +474,7 @@ class GenericTrainer(BaseTrainer):
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         
         with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(self.config.to_json(), f, indent=4)
+            json.dump(self.__config_to_json(), f, indent=4)
 
     def __prune_backups(self, keep_count: int):
         """Remove old backups, keeping only the specified number"""
@@ -564,5 +580,3 @@ class GenericTrainer(BaseTrainer):
                         total_average_loss,
                         train_progress.global_step
                     )
-
-    # Rest of the file remains unchanged...
