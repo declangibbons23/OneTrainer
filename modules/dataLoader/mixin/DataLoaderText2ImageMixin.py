@@ -56,16 +56,34 @@ class DataLoaderText2ImageMixin:
         # Add text processing modules
         if add_embeddings_to_prompt:
             modules.extend([
-                SelectRandomText(),
-                CapitalizeTags(),
-                ShuffleTags(),
-                DropTags(),
+                SelectRandomText(
+                    texts_in_name='prompt',
+                    text_out_name='prompt'
+                ),
+                CapitalizeTags(
+                    text_in_name='prompt',
+                    text_out_name='prompt'
+                ),
+                ShuffleTags(
+                    text_in_name='prompt',
+                    text_out_name='prompt'
+                ),
+                DropTags(
+                    text_in_name='prompt',
+                    text_out_name='prompt'
+                ),
             ])
 
         # Add image processing modules
         modules.extend([
-            LoadImage(),
-            GetFilename(),
+            LoadImage(
+                path_in_name='image_path',
+                image_out_name='image'
+            ),
+            GetFilename(
+                path_in_name='image_path',
+                filename_out_name='filename'
+            ),
         ])
 
         return modules
@@ -74,9 +92,18 @@ class DataLoaderText2ImageMixin:
         """Create mask augmentation modules"""
         if config.masked_training:
             return [
-                RandomMaskRotateCrop(),
-                RandomCircularMaskShrink(),
-                RandomLatentMaskRemove(),
+                RandomMaskRotateCrop(
+                    mask_in_name='mask',
+                    mask_out_name='mask'
+                ),
+                RandomCircularMaskShrink(
+                    mask_in_name='mask',
+                    mask_out_name='mask'
+                ),
+                RandomLatentMaskRemove(
+                    mask_in_name='mask',
+                    mask_out_name='mask'
+                ),
             ]
         return []
 
@@ -84,31 +111,68 @@ class DataLoaderText2ImageMixin:
         """Create aspect bucketing input modules"""
         if config.aspect_ratio_bucketing:
             return [
-                CalcAspect(),
-                AspectBucketing(bucket_side_length=bucket_side_length),
-                InlineAspectBatchSorting(),
+                CalcAspect(
+                    image_in_name='image',
+                    aspect_out_name='aspect'
+                ),
+                AspectBucketing(
+                    aspect_in_name='aspect',
+                    bucket_out_name='bucket',
+                    bucket_side_length=bucket_side_length
+                ),
+                InlineAspectBatchSorting(
+                    bucket_in_name='bucket',
+                    aspect_in_name='aspect'
+                ),
             ]
         return []
 
     def _crop_modules(self, config):
         """Create crop modules"""
-        return [ScaleCropImage()]
+        return [ScaleCropImage(
+            image_in_name='image',
+            image_out_name='image',
+            original_size_out_name='original_resolution',
+            crop_size_out_name='crop_resolution',
+            offset_out_name='crop_offset'
+        )]
 
     def _augmentation_modules(self, config):
         """Create augmentation modules"""
         return [
-            RandomRotate(),
-            RandomFlip(),
-            RandomBrightness(),
-            RandomContrast(),
-            RandomHue(),
-            RandomSaturation(),
+            RandomRotate(
+                image_in_name='image',
+                image_out_name='image'
+            ),
+            RandomFlip(
+                image_in_name='image',
+                image_out_name='image'
+            ),
+            RandomBrightness(
+                image_in_name='image',
+                image_out_name='image'
+            ),
+            RandomContrast(
+                image_in_name='image',
+                image_out_name='image'
+            ),
+            RandomHue(
+                image_in_name='image',
+                image_out_name='image'
+            ),
+            RandomSaturation(
+                image_in_name='image',
+                image_out_name='image'
+            ),
         ]
 
     def _inpainting_modules(self, config):
         """Create inpainting modules"""
         if config.model_type.has_conditioning_image_input():
-            return [GenerateImageLike()]
+            return [GenerateImageLike(
+                image_in_name='image',
+                image_out_name='conditioning_image'
+            )]
         return []
 
     def _output_modules_from_out_names(self, output_names, sort_names, config, before_cache_image_fun, use_conditioning_image, vae, autocast_context, train_dtype):
@@ -120,7 +184,11 @@ class DataLoaderText2ImageMixin:
 
         # Add selection module
         if use_conditioning_image:
-            modules.append(SelectInput())
+            modules.append(SelectInput(
+                image_in_name='image',
+                conditioning_image_in_name='conditioning_image',
+                image_out_name='image'
+            ))
 
         return modules
 
@@ -167,39 +235,91 @@ class DataLoaderText2ImageMixin:
             definition.append(self._create_disk_cache(config, cache_dir))
 
         # Add text loading module
-        definition.append(LoadMultipleTexts([concept.text for concept in concepts]))
+        definition.append(LoadMultipleTexts(
+            paths=[concept.text for concept in concepts],
+            texts_out_name='prompt'
+        ))
 
         # Add image loading and processing modules
-        definition.append(LoadImage())
-        definition.append(GetFilename())
+        definition.append(LoadImage(
+            path_in_name='image_path',
+            image_out_name='image'
+        ))
+        definition.append(GetFilename(
+            path_in_name='image_path',
+            filename_out_name='filename'
+        ))
 
         # Add aspect ratio modules if enabled
         if config.aspect_ratio_bucketing:
-            definition.append(CalcAspect())
+            definition.append(CalcAspect(
+                image_in_name='image',
+                aspect_out_name='aspect'
+            ))
             if is_validation:
-                definition.append(SingleAspectCalculation())
+                definition.append(SingleAspectCalculation(
+                    aspect_in_name='aspect',
+                    aspect_out_name='aspect'
+                ))
             else:
-                definition.append(AspectBucketing())
-                definition.append(AspectBatchSorting())
+                definition.append(AspectBucketing(
+                    aspect_in_name='aspect',
+                    bucket_out_name='bucket',
+                    bucket_side_length=64
+                ))
+                definition.append(AspectBatchSorting(
+                    bucket_in_name='bucket',
+                    aspect_in_name='aspect'
+                ))
 
         # Add augmentation modules if not validation
         if not is_validation:
             if config.masked_training:
-                definition.append(RandomMaskRotateCrop([concept.mask for concept in concepts]))
+                definition.append(RandomMaskRotateCrop(
+                    paths=[concept.mask for concept in concepts],
+                    mask_out_name='mask'
+                ))
             else:
-                definition.append(RandomRotate())
-                definition.append(RandomFlip())
+                definition.append(RandomRotate(
+                    image_in_name='image',
+                    image_out_name='image'
+                ))
+                definition.append(RandomFlip(
+                    image_in_name='image',
+                    image_out_name='image'
+                ))
 
-            definition.append(RandomBrightness())
-            definition.append(RandomContrast())
-            definition.append(RandomHue())
-            definition.append(RandomSaturation())
+            definition.append(RandomBrightness(
+                image_in_name='image',
+                image_out_name='image'
+            ))
+            definition.append(RandomContrast(
+                image_in_name='image',
+                image_out_name='image'
+            ))
+            definition.append(RandomHue(
+                image_in_name='image',
+                image_out_name='image'
+            ))
+            definition.append(RandomSaturation(
+                image_in_name='image',
+                image_out_name='image'
+            ))
 
         # Add conditioning image modules if needed
         if config.model_type.has_conditioning_image_input():
-            definition.append(GenerateMaskedConditioningImage([concept.conditioning_image for concept in concepts]))
+            definition.append(GenerateMaskedConditioningImage(
+                paths=[concept.conditioning_image for concept in concepts],
+                image_out_name='conditioning_image'
+            ))
 
         # Add final processing modules
-        definition.append(ScaleCropImage())
+        definition.append(ScaleCropImage(
+            image_in_name='image',
+            image_out_name='image',
+            original_size_out_name='original_resolution',
+            crop_size_out_name='crop_resolution',
+            offset_out_name='crop_offset'
+        ))
 
         return definition
