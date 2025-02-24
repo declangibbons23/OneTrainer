@@ -57,7 +57,25 @@ class BaseModel(metaclass=ABCMeta):
 
     def get_trainable_modules(self) -> List[torch.nn.Module]:
         """Get list of trainable modules for FSDP wrapping"""
-        return []
+        modules = []
+        
+        # Add UNet if it exists and is trainable
+        if hasattr(self, 'unet') and self.unet is not None:
+            modules.append(self.unet)
+            
+        # Add text encoders if they exist and are trainable
+        if hasattr(self, 'text_encoder_1') and self.text_encoder_1 is not None:
+            modules.append(self.text_encoder_1)
+        if hasattr(self, 'text_encoder_2') and self.text_encoder_2 is not None:
+            modules.append(self.text_encoder_2)
+        if hasattr(self, 'text_encoder_3') and self.text_encoder_3 is not None:
+            modules.append(self.text_encoder_3)
+            
+        # Add prior if it exists and is trainable
+        if hasattr(self, 'prior') and self.prior is not None:
+            modules.append(self.prior)
+            
+        return modules
 
     def named_modules(self, *args, **kwargs) -> Iterator[tuple[str, torch.nn.Module]]:
         """Get named modules for FSDP support"""

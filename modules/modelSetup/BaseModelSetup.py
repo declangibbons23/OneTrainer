@@ -55,15 +55,9 @@ class BaseModelSetup(
         """Set up model for training, including FSDP if enabled"""
         # Set up FSDP if enabled
         if config.enable_fsdp:
-            model.unet = self.setup_fsdp(model.unet, config)
-            if model.text_encoder_1 is not None:
-                model.text_encoder_1 = self.setup_fsdp(model.text_encoder_1, config)
-            if model.text_encoder_2 is not None:
-                model.text_encoder_2 = self.setup_fsdp(model.text_encoder_2, config)
-            if model.text_encoder_3 is not None:
-                model.text_encoder_3 = self.setup_fsdp(model.text_encoder_3, config)
-            if model.prior is not None:
-                model.prior = self.setup_fsdp(model.prior, config)
+            trainable_modules = model.get_trainable_modules()
+            for module in trainable_modules:
+                module = self.setup_fsdp(module, config)
 
     @abstractmethod
     def setup_train_device(

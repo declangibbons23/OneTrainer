@@ -21,12 +21,25 @@ fi
 
 echo "Starting headless distributed training with $GPU_COUNT GPUs..."
 
-# Launch distributed training using torchrun
-torchrun --nproc_per_node="$GPU_COUNT" scripts/train_headless.py "$@"
+# Set environment variables for NCCL
+export NCCL_DEBUG=INFO
+export NCCL_IB_DISABLE=0
+export NCCL_NET_GDR_LEVEL=2
 
-if [ $? -ne 0 ]; then
+# Launch distributed training using torchrun
+# --nnodes=1: We're running on a single machine
+# --nproc_per_node=$GPU_COUNT: Launch one process per GPU
+# --master_port=29500: Default port for distributed training
+torchrun \
+    --nnodes=1 \
+    --nproc_per_node=$GPU_COUNT \
+    --master_port=29500 \
+    scripts/train_headless.py "$@"
+
+exit_code=$?
+if [ $exit_code -ne 0 ]; then
     echo "Error during distributed training"
-    exit 1
+    exit $exit_code
 fi
 
 exit 0

@@ -57,20 +57,20 @@ class DataLoaderText2ImageMixin:
         if add_embeddings_to_prompt:
             modules.extend([
                 SelectRandomText(
-                    texts_in_name='prompt',
-                    text_out_name='prompt'
+                    texts_in_name='texts',
+                    text_out_name='text'
                 ),
                 CapitalizeTags(
-                    text_in_name='prompt',
-                    text_out_name='prompt'
+                    text_in_name='text',
+                    text_out_name='text'
                 ),
                 ShuffleTags(
-                    text_in_name='prompt',
-                    text_out_name='prompt'
+                    text_in_name='text',
+                    text_out_name='text'
                 ),
                 DropTags(
-                    text_in_name='prompt',
-                    text_out_name='prompt'
+                    text_in_name='text',
+                    text_out_name='text'
                 ),
             ])
 
@@ -236,8 +236,8 @@ class DataLoaderText2ImageMixin:
 
         # Add text loading module
         definition.append(LoadMultipleTexts(
-            texts=[concept.text for concept in concepts],
-            text_out_name='prompt'
+            path_in_name='concept.text',
+            texts_out_name='prompt'
         ))
 
         # Add image loading and processing modules
@@ -276,7 +276,7 @@ class DataLoaderText2ImageMixin:
         if not is_validation:
             if config.masked_training:
                 definition.append(RandomMaskRotateCrop(
-                    paths=[concept.mask for concept in concepts],
+                    path_in_name='concept.mask',
                     mask_out_name='mask'
                 ))
             else:
@@ -309,7 +309,7 @@ class DataLoaderText2ImageMixin:
         # Add conditioning image modules if needed
         if config.model_type.has_conditioning_image_input():
             definition.append(GenerateMaskedConditioningImage(
-                paths=[concept.conditioning_image for concept in concepts],
+                path_in_name='concept.conditioning_image',
                 image_out_name='conditioning_image'
             ))
 
