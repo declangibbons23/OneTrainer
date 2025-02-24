@@ -225,8 +225,9 @@ class GenericTrainer(BaseTrainer):
                         self.backup(self.model.train_progress)
 
                 # Clean up FSDP if enabled
-                if self.config.enable_fsdp:
-                    self.model_setup.cleanup_fsdp()
+                if self.config.enable_fsdp and torch.distributed.is_initialized():
+                    torch.distributed.barrier()  # Ensure all processes are ready to clean up
+                    torch.distributed.destroy_process_group()
 
                 # Special case for schedule-free optimizers.
                 if self.config.optimizer.optimizer.is_schedule_free:
@@ -272,8 +273,9 @@ class GenericTrainer(BaseTrainer):
                 self.model.to(self.temp_device)
                 
                 # Clean up FSDP if enabled
-                if self.config.enable_fsdp:
-                    self.model_setup.cleanup_fsdp()
+                if self.config.enable_fsdp and torch.distributed.is_initialized():
+                    torch.distributed.barrier()  # Ensure all processes are ready to clean up
+                    torch.distributed.destroy_process_group()
 
             # Close tensorboard only on primary GPU (or non-distributed mode)
             if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:

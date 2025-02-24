@@ -236,8 +236,8 @@ class DataLoaderText2ImageMixin:
 
         # Add text loading module
         definition.append(LoadMultipleTexts(
-            paths=[concept.text for concept in concepts],
-            texts_out_name='prompt'
+            texts=[concept.text for concept in concepts],
+            text_out_name='prompt'
         ))
 
         # Add image loading and processing modules

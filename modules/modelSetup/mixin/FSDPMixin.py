@@ -136,3 +136,9 @@ class FSDPMixin:
         ):
             state_dict = torch.load(load_path)
             model.load_state_dict(state_dict)
+
+    def cleanup_fsdp(self):
+        """Clean up FSDP resources"""
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()  # Ensure all processes are ready to clean up
+            torch.distributed.destroy_process_group()
