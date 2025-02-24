@@ -24,8 +24,8 @@ if %GPU_COUNT% lss 2 (
 
 echo Starting distributed training with %GPU_COUNT% GPUs...
 
-REM Launch distributed training
-python scripts/launch_distributed.py %*
+REM Launch distributed training using torchrun
+torchrun --nproc_per_node=%GPU_COUNT% scripts/launch_distributed.py %*
 
 if %ERRORLEVEL% neq 0 (
     echo Error during distributed training

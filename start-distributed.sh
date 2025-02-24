@@ -21,8 +21,8 @@ fi
 
 echo "Starting distributed training with $GPU_COUNT GPUs..."
 
-# Launch distributed training
-python scripts/launch_distributed.py "$@"
+# Launch distributed training using torchrun
+torchrun --nproc_per_node="$GPU_COUNT" scripts/launch_distributed.py "$@"
 
 if [ $? -ne 0 ]; then
     echo "Error during distributed training"
