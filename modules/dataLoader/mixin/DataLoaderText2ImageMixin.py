@@ -40,15 +40,13 @@ import torch
 class DataLoaderText2ImageMixin:
     """Mixin class for text-to-image data loaders with distributed support"""
 
-    def _enumerate_input_modules(self, config):
+    def _enumerate_input_modules(self, config, is_validation: bool = False):
         """Create input enumeration modules"""
         return self._create_pipeline_definition(
             config=config,
             cache_dir=config.cache_dir,
-            image_paths=[concept.image for concept in config.concepts],
-            text_paths=[concept.text for concept in config.concepts],
-            mask_paths=[concept.mask for concept in config.concepts] if config.masked_training else None,
-            conditioning_image_paths=[concept.conditioning_image for concept in config.concepts] if config.model_type.has_conditioning_image_input() else None,
+            concepts=config.concepts,
+            is_validation=is_validation
         )
 
     def _load_input_modules(self, config, train_dtype, add_embeddings_to_prompt):
@@ -145,25 +143,31 @@ class DataLoaderText2ImageMixin:
             self,
             config,
             cache_dir: str,
-            image_paths: List[str],
-            text_paths: List[str],
-            mask_paths: List[str] = None,
-            conditioning_image_paths: List[str] = None,
+            concepts: List[Any],
             is_validation: bool = False,
     ) -> List[OutputPipelineModule]:
         """Create pipeline definition with distributed support"""
         definition = []
 
         # Add collect paths module
-        definition.append(CollectPaths(image_paths))
+        definition.append(CollectPaths(
+            concept_in_name='concept',
+            path_in_name='concept.image',
+            include_subdirectories_in_name='concept.include_subdirectories',
+            enabled_in_name='concept.enabled',
+            path_out_name='image_path',
+            concept_out_name='concept',
+            extensions=['.jpg', '.jpeg', '.png', '.webp'],
+            include_postfix=[],
+            exclude_postfix=[],
+        ))
 
         # Add disk cache if enabled
         if config.latent_caching:
             definition.append(self._create_disk_cache(config, cache_dir))
 
         # Add text loading module
-        if text_paths:
-            definition.append(LoadMultipleTexts(text_paths))
+        definition.append(LoadMultipleTexts([concept.text for concept in concepts]))
 
         # Add image loading and processing modules
         definition.append(LoadImage())
@@ -180,8 +184,8 @@ class DataLoaderText2ImageMixin:
 
         # Add augmentation modules if not validation
         if not is_validation:
-            if config.masked_training and mask_paths:
-                definition.append(RandomMaskRotateCrop(mask_paths))
+            if config.masked_training:
+                definition.append(RandomMaskRotateCrop([concept.mask for concept in concepts]))
             else:
                 definition.append(RandomRotate())
                 definition.append(RandomFlip())
@@ -192,8 +196,8 @@ class DataLoaderText2ImageMixin:
             definition.append(RandomSaturation())
 
         # Add conditioning image modules if needed
-        if conditioning_image_paths:
-            definition.append(GenerateMaskedConditioningImage(conditioning_image_paths))
+        if config.model_type.has_conditioning_image_input():
+            definition.append(GenerateMaskedConditioningImage([concept.conditioning_image for concept in concepts]))
 
         # Add final processing modules
         definition.append(ScaleCropImage())
