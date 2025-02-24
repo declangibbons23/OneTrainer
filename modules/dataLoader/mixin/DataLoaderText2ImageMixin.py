@@ -78,7 +78,10 @@ class DataLoaderText2ImageMixin:
         modules.extend([
             LoadImage(
                 path_in_name='image_path',
-                image_out_name='image'
+                image_out_name='image',
+                range_min=0.0,
+                range_max=1.0,
+                supported_extensions=['.jpg', '.jpeg', '.png', '.webp']
             ),
             GetFilename(
                 path_in_name='image_path',
@@ -243,7 +246,10 @@ class DataLoaderText2ImageMixin:
         # Add image loading and processing modules
         definition.append(LoadImage(
             path_in_name='image_path',
-            image_out_name='image'
+            image_out_name='image',
+            range_min=0.0,
+            range_max=1.0,
+            supported_extensions=['.jpg', '.jpeg', '.png', '.webp']
         ))
         definition.append(GetFilename(
             path_in_name='image_path',

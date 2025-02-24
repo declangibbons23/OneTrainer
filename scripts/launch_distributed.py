@@ -1,68 +1,86 @@
+import argparse
 import os
 import sys
-import torch.distributed as dist
-import torch.multiprocessing as mp
 from pathlib import Path
 
-def setup(rank, world_size):
-    """Initialize distributed training"""
-    os.environ['MASTER_ADDR'] = os.environ.get('MASTER_ADDR', 'localhost')
-    os.environ['MASTER_PORT'] = os.environ.get('MASTER_PORT', '29500')
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
 
-def cleanup():
+from modules.util.config.TrainConfig import TrainConfig
+from modules.trainer.GenericTrainer import GenericTrainer
+from modules.util.callbacks.TrainCallbacks import TrainCallbacks
+from modules.util.commands.TrainCommands import TrainCommands
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='Distributed training script')
+    parser.add_argument('--config', type=str, help='Path to config file')
+    parser.add_argument('--local_rank', type=int, default=0, help='Local rank for distributed training')
+    return parser.parse_args()
+
+def setup_distributed(local_rank):
+    """Set up distributed training"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend='nccl',
+                init_method='env://',
+                world_size=world_size,
+                rank=rank
+            )
+            torch.cuda.set_device(local_rank)
+
+def cleanup_distributed():
     """Clean up distributed training"""
-    dist.destroy_process_group()
-
-def run_training(rank, world_size, args):
-    """Run training on each GPU"""
-    setup(rank, world_size)
-    
-    # Set CUDA device for this process
-    torch.cuda.set_device(rank)
-    
-    # Import here to avoid circular imports
-    from modules.ui.TrainUI import TrainUI
-    from modules.util.config.TrainConfig import TrainConfig
-    
-    # Start training based on mode
-    if '--headless' in args:
-        # Headless mode
-        from scripts.train_headless import main as train_headless
-        # Remove --headless from args
-        args = [arg for arg in args if arg != '--headless']
-        train_headless(args)
-    else:
-        # GUI mode
-        ui = TrainUI()
-        ui.start()
-    
-    cleanup()
+    if dist.is_initialized():
+        dist.barrier()  # Ensure all processes are ready to clean up
+        dist.destroy_process_group()
 
 def main():
-    """Main entry point for distributed training"""
-    if not torch.cuda.is_available():
-        print("CUDA is not available. Multi-GPU training requires CUDA.")
-        sys.exit(1)
+    """Main training function"""
+    args = parse_args()
     
-    # Get number of GPUs from environment or available devices
-    world_size = int(os.environ.get('WORLD_SIZE', torch.cuda.device_count()))
-    if world_size < 2:
-        print(f"Found only {world_size} GPU(s). Multi-GPU training requires at least 2 GPUs.")
-        sys.exit(1)
+    # Set up distributed training
+    setup_distributed(args.local_rank)
     
-    print(f"Starting distributed training with {world_size} GPUs...")
-    
-    # Start processes for each GPU
     try:
-        mp.spawn(
-            run_training,
-            args=(world_size, sys.argv[1:]),
-            nprocs=world_size,
-            join=True
-        )
-    except Exception as e:
-        print(f"Error during distributed training: {e}")
-        sys.exit(1)
+        # Load config
+        if args.config and os.path.exists(args.config):
+            with open(args.config, 'r') as f:
+                config_dict = json.load(f)
+                config = TrainConfig.default_values().from_dict(config_dict)
+        else:
+            config = TrainConfig.default_values()
+        
+        # Enable FSDP
+        config.enable_fsdp = True
+        
+        # Get world size
+        if dist.is_initialized():
+            config.fsdp_num_gpus = dist.get_world_size()
+        else:
+            config.fsdp_num_gpus = torch.cuda.device_count()
+        
+        # Create callbacks and commands
+        callbacks = TrainCallbacks()
+        commands = TrainCommands()
+        
+        # Create and start trainer
+        trainer = GenericTrainer(config, callbacks, commands)
+        trainer.start()
+        
+        while not trainer.should_stop():
+            trainer.train_step()
+            
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+    finally:
+        if trainer is not None:
+            trainer.end()
+        cleanup_distributed()
 
 if __name__ == "__main__":
+    main()
