@@ -1,99 +1,141 @@
 #!/usr/bin/env python3
 """
-Check Multi-GPU Setup
-
+Multi-GPU diagnostic script for OneTrainer.
 This script checks if your system is properly set up for multi-GPU training.
-It verifies that PyTorch is installed, CUDA is available, and multiple GPUs are detected.
 """
 
 import os
 import sys
-import traceback
+import platform
+import logging
+from pathlib import Path
 
-print("Checking Multi-GPU Setup")
-print("========================")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
-# Check Python version
-print(f"\n[1] Python Version: {sys.version.split()[0]}")
+# Try to import script_imports first
+try:
+    # First try from the expected location
+    script_dir = Path(__file__).resolve().parent
+    root_dir = script_dir.parent
+    sys.path.append(str(root_dir))
+    
+    try:
+        from util.import_util import script_imports
+        script_imports()
+    except ImportError:
+        # If that fails, try directly
+        sys.path.append(str(script_dir))
 
-# Check PyTorch installation
+except Exception as e:
+    logger.error(f"Error setting up Python path: {e}")
+    logger.error("This script should be run from the OneTrainer directory.")
+
+# Import checks
+logger.info("=== OneTrainer Multi-GPU System Check ===")
+logger.info(f"Python version: {platform.python_version()}")
+logger.info(f"Platform: {platform.platform()}")
+
+# Check PyTorch and CUDA
 try:
     import torch
-    print(f"\n[2] PyTorch Version: {torch.__version__}")
-except ImportError:
-    print("\n[2] PyTorch: Not installed!")
-    print("    Please install PyTorch with CUDA support:")
-    print("    https://pytorch.org/get-started/locally/")
-    sys.exit(1)
-
-# Check CUDA availability
-try:
+    logger.info(f"PyTorch version: {torch.__version__}")
+    
     if torch.cuda.is_available():
-        print("\n[3] CUDA: Available")
-        print(f"    CUDA Version: {torch.version.cuda}")
+        logger.info(f"CUDA available: Yes (version {torch.version.cuda})")
+        gpu_count = torch.cuda.device_count()
+        logger.info(f"Number of GPUs detected: {gpu_count}")
+        
+        if gpu_count < 2:
+            logger.warning("Multi-GPU training requires at least 2 GPUs, but only 1 was detected.")
+        else:
+            logger.info("✓ Multiple GPUs detected - Good")
+            
+        # Print GPU info
+        logger.info("\nGPU Information:")
+        for i in range(gpu_count):
+            logger.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+            try:
+                mem_info = torch.cuda.get_device_properties(i).total_memory / 1024**3  # in GB
+                logger.info(f"    Memory: {mem_info:.2f} GB")
+            except:
+                logger.info("    Memory: Unknown")
     else:
-        print("\n[3] CUDA: Not available!")
-        print("    Please ensure you have a CUDA-capable GPU and PyTorch was installed with CUDA support.")
-        sys.exit(1)
-except Exception as e:
-    print(f"\n[3] CUDA: Error checking CUDA: {e}")
-    sys.exit(1)
+        logger.error("CUDA is not available. Multi-GPU training requires CUDA support.")
+except ImportError:
+    logger.error("PyTorch is not installed or failed to import. Please install PyTorch with CUDA support.")
 
-# Check GPU count
-try:
-    gpu_count = torch.cuda.device_count()
-    print(f"\n[4] GPUs: {gpu_count} detected")
-    
-    if gpu_count < 2:
-        print("    Warning: Multi-GPU training requires at least 2 GPUs")
-        print("    You can still use the UI, but training will run on a single GPU")
-    
-    # Print GPU info
-    for i in range(gpu_count):
-        gpu_name = torch.cuda.get_device_name(i)
-        memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)  # Convert to GB
-        print(f"    GPU {i}: {gpu_name} ({memory:.2f} GB)")
-except Exception as e:
-    print(f"\n[4] GPUs: Error checking GPUs: {e}")
-    print(traceback.format_exc())
-    sys.exit(1)
-
-# Check distributed module
+# Check distributed package
 try:
     import torch.distributed as dist
-    print("\n[5] torch.distributed: Available")
+    
+    # Check NCCL backend
+    try:
+        if hasattr(torch.distributed, 'is_nccl_available'):
+            if torch.distributed.is_nccl_available():
+                logger.info("✓ NCCL backend is available - Good")
+            else:
+                logger.warning("NCCL backend is not available. It's recommended for GPU training.")
+        else:
+            # Older PyTorch versions
+            logger.info("? Unable to check NCCL backend availability")
+    except:
+        logger.warning("Failed to check NCCL backend availability")
+    
+    # Check GLOO backend
+    try:
+        if hasattr(torch.distributed, 'is_gloo_available'):
+            if torch.distributed.is_gloo_available():
+                logger.info("✓ GLOO backend is available - Good")
+            else:
+                logger.warning("GLOO backend is not available. It's an alternative to NCCL.")
+        else:
+            # Older PyTorch versions
+            logger.info("? Unable to check GLOO backend availability")
+    except:
+        logger.warning("Failed to check GLOO backend availability")
+        
 except ImportError:
-    print("\n[5] torch.distributed: Not available!")
-    print("    This is unusual with standard PyTorch installations.")
-    print("    Please reinstall PyTorch with CUDA support.")
-    sys.exit(1)
+    logger.error("PyTorch distributed module failed to import.")
 
-# Check DDP implementation
-try:
-    from torch.nn.parallel import DistributedDataParallel
-    print("\n[6] DistributedDataParallel: Available")
-except ImportError:
-    print("\n[6] DistributedDataParallel: Not available!")
-    print("    This is unusual with standard PyTorch installations.")
-    print("    Please reinstall PyTorch.")
-    sys.exit(1)
-
-# Check OneTrainer multi-GPU implementation
+# Check for OneTrainer modules
 try:
     from modules.trainer.DistributedTrainer import DistributedTrainer
-    from modules.util.distributed_util import setup_distributed, cleanup_distributed
-    print("\n[7] OneTrainer Multi-GPU: Implemented")
-except ImportError:
-    print("\n[7] OneTrainer Multi-GPU: Not available!")
-    print("    Make sure scripts/train_multi_gpu.py exists and the implementation is complete.")
-    sys.exit(1)
+    from modules.util.distributed_util import setup_distributed
+    logger.info("✓ OneTrainer distributed modules are available - Good")
+except ImportError as e:
+    logger.error(f"OneTrainer distributed modules not found: {e}")
+    logger.error("Make sure you're running this script from the root OneTrainer directory.")
 
-print("\n========================")
-if gpu_count >= 2:
-    print("Your system is ready for multi-GPU training!")
-    print("\nTo use multi-GPU training:")
-    print("1. Use the Multi-GPU panel in the training UI")
-    print("2. Or run: ./start-multi-gpu.sh (Linux/macOS) or start-multi-gpu.bat (Windows)")
+# Check if running as root (which can cause issues)
+if os.name == 'posix' and os.geteuid() == 0:
+    logger.warning("You are running as root, which might cause issues with multi-GPU training.")
+
+logger.info("\n=== Result ===")
+if torch.cuda.is_available() and torch.cuda.device_count() >= 2:
+    logger.info("Your system appears ready for multi-GPU training!")
+    logger.info("You can enable multi-GPU training in the UI or run start-multi-gpu.sh/bat")
 else:
-    print("Your system only has 1 GPU. Multi-GPU training requires at least 2 GPUs.")
-    print("You can still use the UI, but training will run on a single GPU.")
+    logger.info("Your system is not properly configured for multi-GPU training.")
+    if torch.cuda.device_count() < 2:
+        logger.info("Reason: At least 2 GPUs are required, but only " + 
+                  f"{torch.cuda.device_count()} {'was' if torch.cuda.device_count() == 1 else 'were'} detected.")
+    elif not torch.cuda.is_available():
+        logger.info("Reason: CUDA is not available.")
+    else:
+        logger.info("Reason: Unknown issue with your setup.")
+
+# Performance recommendations
+logger.info("\n=== Performance Recommendations ===")
+logger.info("1. Use the NCCL backend for best GPU-to-GPU communication performance")
+logger.info("2. Enable distributed data loading for optimal throughput")
+logger.info("3. Consider using automatic learning rate scaling based on GPU count")
+logger.info("4. For memory-limited GPUs, try reducing batch size per GPU")
+logger.info("5. Make sure all GPUs are of the same model for best performance")

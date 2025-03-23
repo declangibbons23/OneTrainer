@@ -158,6 +158,15 @@ class TrainOptimizerConfig(BaseConfig):
         data.append(("k", None, int, True))
         data.append(("xi", None, float, True))
         data.append(("n_sma_threshold", None, int, True))
+        
+        # Multi-GPU training settings
+        data.append(("enable_multi_gpu", False, bool, False))
+        data.append(("distributed_backend", "nccl", str, False))
+        data.append(("distributed_data_loading", True, bool, False))
+        data.append(("use_torchrun", True, bool, False))
+        data.append(("lr_scaling", True, bool, False))
+        data.append(("world_size", None, int, True))
+        data.append(("local_rank", None, int, True))
         data.append(("ams_bound", False, bool, False))
         data.append(("r", None, float, True))
         data.append(("adanorm", False, bool, False))

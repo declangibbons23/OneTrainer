@@ -17,20 +17,31 @@ class DistributedTrainer(BaseTrainer):
     """
     Extended trainer class that supports distributed training across multiple GPUs.
     """
-    
     def __init__(
             self,
             train_config: TrainConfig,
-            train_args: TrainArgs,
-            train_device: torch.device,
-            temp_device: torch.device,
-            rank: int = 0,
-            world_size: int = 1,
+            callbacks=None,
+            commands=None,
+            local_rank: int = 0,
     ):
-        super().__init__(train_config, train_args, train_device, temp_device)
+        # Get devices from config or use defaults
+        train_device = train_config.train_device if hasattr(train_config, 'train_device') else f"cuda:{local_rank}"
+        temp_device = train_config.temp_device if hasattr(train_config, 'temp_device') else "cpu"
         
-        self.rank = rank
-        self.world_size = world_size
+        # Create dummy train_args if not using it
+        train_args = TrainArgs()
+        
+        # Call parent init
+        super().__init__(train_config, train_args, torch.device(train_device), torch.device(temp_device))
+        
+        # Set up callbacks and commands if provided
+        self.callbacks = callbacks
+        self.commands = commands
+        
+        # Initialize distributed training properties
+        self.rank = local_rank
+        self.world_size = train_config.world_size if hasattr(train_config, 'world_size') else 1
+        self.is_main_process = local_rank == 0
         self.is_main_process = rank == 0
         
         # Configure logging based on rank
@@ -54,6 +65,36 @@ class DistributedTrainer(BaseTrainer):
             logger.info(f"Using {self.train_config.distributed_backend} backend")
             logger.info(f"Distributed data loading: {self.train_config.distributed_data_loading}")
     
+    def start(self):
+        """
+        Start training process, initialize distributed environment if needed.
+        """
+        # If distributed environment is not yet initialized, do it now
+        if not dist.is_initialized():
+            from modules.util.distributed_util import setup_distributed
+            
+            # Get distributed parameters from config
+            local_rank = getattr(self.train_config, 'local_rank', 0)
+            world_size = getattr(self.train_config, 'world_size', torch.cuda.device_count())
+            backend = getattr(self.train_config, 'distributed_backend', 'nccl')
+            
+            # Use default port or random port
+            port = getattr(self.train_config, 'dist_port', 12355)
+            
+            logger.info(f"Initializing distributed environment: rank={local_rank}, world_size={world_size}")
+            setup_distributed(local_rank, world_size, backend, port)
+            
+            # Update rank and world size based on initialized values
+            self.rank = dist.get_rank()
+            self.world_size = dist.get_world_size()
+            self.is_main_process = self.rank == 0
+            
+            # Set device for this process
+            torch.cuda.set_device(self.rank)
+        
+        # Call parent start method
+        super().start()
+
     def post_loading_setup(self, model: BaseModel):
         """
         Perform setup after model loading.

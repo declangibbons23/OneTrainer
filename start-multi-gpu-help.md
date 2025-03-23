@@ -1,62 +1,81 @@
-# OneTrainer Multi-GPU Training Guide
+# Multi-GPU Training with OneTrainer
 
-This guide explains how to use OneTrainer's multi-GPU training features to accelerate model training across multiple GPUs.
+This document provides information about using multiple GPUs for training in OneTrainer.
 
 ## Requirements
 
-- Multiple CUDA-compatible GPUs (at least 2)
+- At least 2 CUDA-capable GPUs
 - PyTorch with CUDA support
-- NCCL or GLOO backend installed (NCCL is recommended for GPU training)
+- NCCL or GLOO backend (NCCL recommended for better performance)
 
-## Methods to Enable Multi-GPU Training
+## Usage
 
-### Method 1: Using the GUI
+### Using the GUI
 
-1. Launch the OneTrainer UI: `./start-ui.sh` or `start-ui.bat`
-2. In the UI, find the "Multi-GPU Training" panel
-3. Check the "Enable Multi-GPU" option
-4. Configure additional options:
-   - Backend: Choose between "nccl" (recommended) or "gloo"
+1. Launch the OneTrainer UI
+2. In the Training tab, you'll see a "Multi-GPU Training" section
+3. Check "Enable Multi-GPU" to use distributed training
+4. Configure other settings:
+   - Backend: NCCL (recommended) or GLOO
    - Distributed Data: Enable for better performance
-   - Use Torchrun: Recommended for most users
-   - Scale Learning Rate: Auto-scale learning rate based on GPU count
-5. Configure your model and training settings as usual
-6. Click "Start Training"
+   - Use Torchrun: Recommended method for launching processes
+   - Scale Learning Rate: Automatically adjust LR based on number of GPUs
 
-### Method 2: Using the Command Line Script
+### Using the Command Line
 
-The `start-multi-gpu.sh` (Linux/macOS) or `start-multi-gpu.bat` (Windows) script provides an interactive way to launch distributed training:
+Run the `start-multi-gpu.sh` script (Linux/macOS) or `start-multi-gpu.bat` (Windows):
 
 ```bash
+# Linux/macOS
 ./start-multi-gpu.sh
+
+# Windows
+start-multi-gpu.bat
 ```
 
-The script will:
-1. Detect available GPUs
-2. Ask how many GPUs to use
-3. Ask for the path to your training config file
-4. Launch distributed training
+Follow the prompts to configure your multi-GPU training.
 
-### Method 3: Running Directly with torchrun (Advanced)
+## How Multi-GPU Training Works
 
-For advanced users, you can run the multi-GPU training script directly with torchrun:
+OneTrainer uses PyTorch's Distributed Data Parallel (DDP) for multi-GPU training:
 
-```bash
-torchrun --nproc_per_node=NUM_GPUS scripts/train_multi_gpu.py --config-path=YOUR_CONFIG.json
-```
+1. The model is replicated across multiple GPUs
+2. Each GPU processes a different batch of data
+3. Gradients are synchronized across all GPUs
+4. The model parameters stay in sync during training
+
+Benefits:
+- Linear speedup with the number of GPUs (ideally)
+- Ability to train larger models or use larger batch sizes
+- Reduced training time
 
 ## Troubleshooting
 
-If you encounter issues:
+If you're having issues with multi-GPU training:
 
-1. Run the diagnostic script: `python scripts/check_multi_gpu.py`
-2. Verify your GPUs are detected: `nvidia-smi`
-3. Make sure your CUDA environment is properly set up
-4. Try using the GLOO backend if NCCL has issues on your system
+1. Run the diagnostic script to check your setup:
+   ```bash
+   python scripts/check_multi_gpu.py
+   ```
 
-## Performance Tips
+2. Common issues:
+   - CUDA not available: Install CUDA and PyTorch with CUDA support
+   - Only one GPU detected: Check if your GPUs are visible to the system
+   - NCCL errors: Try using the GLOO backend instead
+   - Out of memory errors: Reduce batch size per GPU
 
-1. Enable distributed data loading for optimal performance
-2. Use the "Scale Learning Rate" option to automatically adjust learning rates
-3. The first epoch may be slower as the distributed environment initializes
-4. Monitor GPU utilization with `nvidia-smi` to ensure all GPUs are being used
+## Advanced Configuration
+
+For advanced users, you can directly use the `train_multi_gpu.py` script:
+
+```bash
+python scripts/train_multi_gpu.py --config-path=your_config.json --num-gpus=2 --distributed-backend=nccl
+```
+
+Options:
+- `--config-path`: Path to your training config JSON file
+- `--num-gpus`: Number of GPUs to use (0 for all)
+- `--spawn`: Use torch.multiprocessing.spawn instead of torchrun
+- `--port`: Port for distributed communication
+- `--distributed-backend`: "nccl" or "gloo"
+- `--distributed-data-loading`: Enable distributed data loading
