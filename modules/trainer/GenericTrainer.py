@@ -695,4 +695,135 @@ class GenericTrainer(BaseTrainer):
                     learning_rate_scheduler=self.config.learning_rate_scheduler,
                     warmup_steps=self.config.learning_rate_warmup_steps,
                     num_cycles=self.config.learning_rate_cycles,
-                    min_factor=self.config.learning_
+                    min_factor=self.config.learning_rate_min_factor,
+        )
+
+            step_tqdm = tqdm(
+                self.data_loader.get_data_loader(),
+                desc="training_step",
+                total=self.data_loader.get_data_set().approximate_length())
+            loss_sum = 0.0
+            loss_count = 0
+            data_load_time = 0
+            model_time = 0
+            epoch_start_time = time.time()
+
+            self.model.train()
+            self.callbacks.on_epoch_begin()
+
+            memory_recorder = TorchMemoryRecorder()
+            memory_stats_list = []
+
+            for batch in step_tqdm:
+                train_progress.on_step_begin()
+
+                if self.__needs_gc(train_progress):
+                    torch_gc()
+
+                iter_data_load_time_start = time.time()
+                data_load_time += time.time() - iter_data_load_time_start
+
+                with self.autocast_context():
+                    iter_model_time_start = time.time()
+                    model_output_data = self.model_setup.forward(self.model, batch, self.config, train_progress)
+                    loss = self.model_setup.calculate_loss(self.model, batch, model_output_data, self.config)
+                    loss_item = loss.item()
+                    model_time += time.time() - iter_model_time_start
+
+                    if not has_gradient and self.parameters:
+                        has_gradient = any(p.grad is not None for p in self.parameters)
+
+                    accumulated_loss += loss_item
+                    loss_sum += loss_item
+                    loss_count += 1
+                    current_loss = accumulated_loss / loss_count
+
+                    if ema_loss is None:
+                        ema_loss = current_loss
+                    ema_loss = ema_loss * 0.99 + current_loss * 0.01
+                    ema_loss_steps += 1
+
+                    if self.config.tensorboard and train_progress.global_step % self.config.tensorboard_update_steps == 0:
+                        self.tensorboard.add_scalar("loss/current_step", loss_item, train_progress.global_step)
+                        self.tensorboard.add_scalar("loss/running_average", current_loss, train_progress.global_step)
+                        self.tensorboard.add_scalar("loss/ema", ema_loss, train_progress.global_step)
+                        self.tensorboard.add_scalar("lr", self.model.optimizer.get_last_lr()[0], train_progress.global_step)
+
+                    if scaler:
+                        scaled_loss = scaler.scale(loss)
+                        scaled_loss.backward()
+                    else:
+                        loss.backward()
+
+                if self.__is_update_step(train_progress):
+                    if not self.config.optimizer.fused_back_pass:
+                        if scaler:
+                            if self.config.clip_grad_norm is not None:
+                                scaler.unscale_(self.model.optimizer)
+                                torch.nn.utils.clip_grad_norm_(self.parameters, self.config.clip_grad_norm)
+                            scaler.step(self.model.optimizer)
+                            scaler.update()
+                        else:
+                            if self.config.clip_grad_norm is not None:
+                                torch.nn.utils.clip_grad_norm_(self.parameters, self.config.clip_grad_norm)
+                            self.model.optimizer.step()
+
+                        self.model.optimizer.zero_grad(set_to_none=True)
+                    else:
+                        self.model.optimizer.zero_grad(set_to_none=True)
+                        self.model.optimizer.step_parameter_post_accumulate()
+
+                    lr_scheduler.step()
+                    train_progress.step()
+
+                    if self.config.ema_start_step != -1 and train_progress.global_step >= self.config.ema_start_step:
+                        self.model.ema.step(self.parameters)
+
+                    if train_progress.global_step % self.config.log_memory_every_step == 0:
+                        memory_stats = memory_recorder.get_memory_stats()
+                        memory_stats_list.append(memory_stats)
+
+                    if self.__needs_sample(train_progress) and has_gradient:
+                        self.__enqueue_sample_during_training(
+                            lambda: self.__sample_during_training(train_progress, train_device)
+                        )
+
+                    if self.__needs_backup(train_progress):
+                        self.__enqueue_sample_during_training(
+                            lambda: self.backup(train_progress, print_cb=self.callbacks.on_update_status)
+                        )
+
+                    if self.__needs_save(train_progress):
+                        self.__enqueue_sample_during_training(
+                            lambda: self.save(train_progress, print_cb=self.callbacks.on_update_status)
+                        )
+
+                step_tqdm.set_postfix({
+                    "loss": f"{current_loss:.4f}",
+                    "ema_loss": f"{ema_loss:.4f}",
+                    "lr": f"{self.model.optimizer.get_last_lr()[0]:.8f}",
+                    "step": train_progress.global_step,
+                    "epoch": train_progress.epoch,
+                })
+
+            self.__execute_sample_during_training()
+            self.__validate(train_progress)
+
+            self.callbacks.on_epoch_end()
+            train_progress.epoch_time = time.time() - epoch_start_time
+            train_progress.increment_epoch()
+
+            if self.config.tensorboard:
+                self.tensorboard.add_scalar("time/epoch", train_progress.epoch_time, train_progress.epoch)
+                self.tensorboard.add_scalar("loss/epoch_average", loss_sum / loss_count, train_progress.epoch)
+                if memory_stats_list:
+                    avg_memory_stats = {}
+                    for key in memory_stats_list[0]:
+                        avg_memory_stats[key] = sum(stat[key] for stat in memory_stats_list) / len(memory_stats_list)
+                    self.tensorboard.add_scalars("memory/avg_epoch", avg_memory_stats, train_progress.epoch)
+
+        if self.config.tensorboard:
+            self.tensorboard.flush()
+            self.tensorboard.close()
+
+        print("Done!")
