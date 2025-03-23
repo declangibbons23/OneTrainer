@@ -9,8 +9,18 @@ if ! command -v python &> /dev/null; then
     exit 1
 fi
 
+# Check if PyTorch is installed
+if ! python -c "import torch" &> /dev/null; then
+    echo "PyTorch not found. Please install PyTorch and try again."
+    exit 1
+fi
+
 # Check if CUDA is available
-python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('Number of GPUs:', torch.cuda.device_count())"
+if ! python -c "import torch; cuda_available = torch.cuda.is_available(); print('CUDA available:', cuda_available); print('Number of GPUs:', torch.cuda.device_count() if cuda_available else 0); exit(0 if cuda_available else 1)"; then
+    echo "CUDA is not available. Multi-GPU training requires CUDA support."
+    echo "Please install CUDA and PyTorch with CUDA support, or use single-GPU training."
+    exit 1
+fi
 echo
 
 # Get number of available GPUs

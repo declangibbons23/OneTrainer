@@ -2,8 +2,25 @@ import json
 import tkinter as tk
 from tkinter import ttk
 
-from modules.ui.TooltipLabel import TooltipLabel
-from modules.ui.UIState import UIState
+# Try to import dependencies, but provide fallbacks if not available
+try:
+    from modules.ui.TooltipLabel import TooltipLabel
+except ImportError:
+    # Create a simple fallback if TooltipLabel is not available
+    class TooltipLabel(ttk.Label):
+        def __init__(self, master=None, text="", tooltip="", **kwargs):
+            super().__init__(master, text=text, **kwargs)
+
+try:
+    from modules.util.ui.UIState import UIState
+except ImportError:
+    # Create minimal UIState implementation if unavailable
+    class UIState:
+        def __init__(self):
+            self.train_config = None
+        
+        def get_var(self, name):
+            return None
 
 
 class MultiGPUFrame(ttk.LabelFrame):

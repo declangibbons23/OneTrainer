@@ -8,8 +8,20 @@ IF %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
+REM Check if PyTorch is installed
+python -c "import torch" >nul 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo PyTorch not found. Please install PyTorch and try again.
+    exit /b 1
+)
+
 REM Check if CUDA is available
-python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('Number of GPUs:', torch.cuda.device_count())"
+python -c "import torch; cuda_available = torch.cuda.is_available(); print('CUDA available:', cuda_available); print('Number of GPUs:', torch.cuda.device_count() if cuda_available else 0); exit(0 if cuda_available else 1)"
+IF %ERRORLEVEL% NEQ 0 (
+    echo CUDA is not available. Multi-GPU training requires CUDA support.
+    echo Please install CUDA and PyTorch with CUDA support, or use single-GPU training.
+    exit /b 1
+)
 echo.
 
 REM Get number of available GPUs

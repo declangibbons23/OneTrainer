@@ -4,15 +4,44 @@ import sys
 import json
 import argparse
 import logging
-import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
 from pathlib import Path
 
-from modules.util.args.TrainArgs import TrainArgs
-from modules.util.config.TrainConfig import TrainConfig
-from modules.trainer.DistributedTrainer import DistributedTrainer
-from modules.util.distributed_util import setup_distributed, cleanup_distributed
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Check for required dependencies
+try:
+    import torch
+    import torch.distributed as dist
+    import torch.multiprocessing as mp
+except ImportError as e:
+    logger.error(f"Missing required dependency: {e}")
+    logger.error("Please install PyTorch with: pip install torch")
+    sys.exit(1)
+
+# Check for CUDA support
+if not torch.cuda.is_available():
+    logger.error("CUDA is not available. Multi-GPU training requires CUDA support.")
+    logger.error("Please install CUDA and PyTorch with CUDA support.")
+    sys.exit(1)
+
+# Import OneTrainer modules
+try:
+    from modules.util.args.TrainArgs import TrainArgs
+    from modules.util.config.TrainConfig import TrainConfig
+    from modules.trainer.DistributedTrainer import DistributedTrainer
+    from modules.util.distributed_util import setup_distributed, cleanup_distributed
+except ImportError as e:
+    logger.error(f"Failed to import OneTrainer modules: {e}")
+    logger.error("Make sure you're running this script from the OneTrainer directory.")
+    sys.exit(1)
 
 # Configure logging
 logging.basicConfig(

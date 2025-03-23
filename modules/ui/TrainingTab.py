@@ -2,7 +2,13 @@ from modules.ui.OffloadingWindow import OffloadingWindow
 from modules.ui.OptimizerParamsWindow import OptimizerParamsWindow
 from modules.ui.SchedulerParamsWindow import SchedulerParamsWindow
 from modules.ui.TimestepDistributionWindow import TimestepDistributionWindow
-from modules.ui.MultiGPUFrame import MultiGPUFrame
+
+# Try to import MultiGPUFrame, but continue if it's not available
+try:
+    from modules.ui.MultiGPUFrame import MultiGPUFrame
+    MULTI_GPU_AVAILABLE = True
+except ImportError:
+    MULTI_GPU_AVAILABLE = False
 from modules.util.config.TrainConfig import TrainConfig
 from modules.util.enum.DataType import DataType
 from modules.util.enum.EMAMode import EMAMode
@@ -187,8 +193,25 @@ class TrainingTab:
 
     def __create_multi_gpu_frame(self, master, row):
         """Create the multi-GPU settings frame"""
-        multi_gpu_frame = MultiGPUFrame(master=master, ui_state=self.ui_state)
-        multi_gpu_frame.grid(row=row, column=0, padx=5, pady=5, sticky="nsew")
+        if not 'MULTI_GPU_AVAILABLE' in globals() or MULTI_GPU_AVAILABLE:
+            try:
+                multi_gpu_frame = MultiGPUFrame(master=master, ui_state=self.ui_state)
+                multi_gpu_frame.grid(row=row, column=0, padx=5, pady=5, sticky="nsew")
+                
+                # If MultiGPUFrame was successfully created, update it from config
+                if hasattr(self.train_config, 'enable_multi_gpu'):
+                    multi_gpu_frame.update_from_config(self.train_config)
+            except Exception as e:
+                # If something goes wrong, create a basic frame with info message
+                frame = ctk.CTkFrame(master=master, corner_radius=5)
+                frame.grid(row=row, column=0, padx=5, pady=5, sticky="nsew")
+                frame.grid_columnconfigure(0, weight=1)
+                
+                info_label = ctk.CTkLabel(
+                    frame,
+                    text="Multi-GPU settings unavailable.\nCheck the console for errors."
+                )
+                info_label.grid(row=0, column=0, padx=10, pady=10)
 
     def __create_base_frame(self, master, row):
         frame = ctk.CTkFrame(master=master, corner_radius=5)
