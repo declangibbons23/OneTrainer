@@ -1,5 +1,4 @@
 import json
-import os
 import threading
 import traceback
 import webbrowser
@@ -14,7 +13,6 @@ from modules.ui.CaptionUI import CaptionUI
 from modules.ui.CloudTab import CloudTab
 from modules.ui.ConceptTab import ConceptTab
 from modules.ui.ConvertModelUI import ConvertModelUI
-from modules.ui.DistributedTrainingTab import DistributedTrainingTab
 from modules.ui.LoraTab import LoraTab
 from modules.ui.ModelTab import ModelTab
 from modules.ui.ProfilingWindow import ProfilingWindow
@@ -55,19 +53,14 @@ class TrainUI(ctk.CTk):
 
         self.title("OneTrainer")
         try:
-            # Try to set icon - but only on Windows
-            if os.name == 'nt':  # Check if running on Windows
-                self.iconbitmap("resources/icons/icon.ico")
-            # For other platforms, we'll use wm_iconphoto which is more universal
+            # Windows attempt
+            self.iconbitmap("resources/icons/icon.ico")
         except Exception as e:
             print("Error using iconbitmap:", e)
 
-        # Load a PNG icon to set the global icon for future toplevels
-        try:
-            self._icon_photo = PhotoImage(file="resources/icons/icon.png")
-            self.wm_iconphoto(True, self._icon_photo)
-        except Exception as e:
-            print("Error setting icon photo:", e)
+        # Load a PNG icon to set the global icon for future toplevels apparently
+        self._icon_photo = PhotoImage(file="resources/icons/icon.png")
+        self.wm_iconphoto(True, self._icon_photo)
         self.geometry("1100x740")
 
         # more efficient version of ctk.set_appearance_mode("System"), which retrieves the system theme on each main loop iteration
@@ -156,7 +149,6 @@ class TrainUI(ctk.CTk):
         self.tabview.grid(row=0, column=0, sticky="nsew")
 
         self.general_tab = self.create_general_tab(self.tabview.add("general"))
-        self.distributed_tab = self.create_distributed_tab(self.tabview.add("distributed"))
         self.model_tab = self.create_model_tab(self.tabview.add("model"))
         self.data_tab = self.create_data_tab(self.tabview.add("data"))
         self.create_concepts_tab(self.tabview.add("concepts"))
@@ -171,9 +163,6 @@ class TrainUI(ctk.CTk):
 
         return frame
 
-    def create_distributed_tab(self, master):
-        return DistributedTrainingTab(master, self.train_config, self.ui_state)
-        
     def create_general_tab(self, master):
         frame = ctk.CTkScrollableFrame(master, fg_color="transparent")
         frame.grid_columnconfigure(0, weight=0)

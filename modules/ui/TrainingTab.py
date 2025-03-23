@@ -2,6 +2,7 @@ from modules.ui.OffloadingWindow import OffloadingWindow
 from modules.ui.OptimizerParamsWindow import OptimizerParamsWindow
 from modules.ui.SchedulerParamsWindow import SchedulerParamsWindow
 from modules.ui.TimestepDistributionWindow import TimestepDistributionWindow
+from modules.ui.MultiGPUFrame import MultiGPUFrame
 from modules.util.config.TrainConfig import TrainConfig
 from modules.util.enum.DataType import DataType
 from modules.util.enum.EMAMode import EMAMode
@@ -84,6 +85,7 @@ class TrainingTab:
         self.__create_unet_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
+        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -98,6 +100,7 @@ class TrainingTab:
         self.__create_transformer_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
+        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -111,6 +114,7 @@ class TrainingTab:
         self.__create_unet_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
+        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -123,8 +127,9 @@ class TrainingTab:
         self.__create_prior_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_masked_frame(column_2, 0)
-        self.__create_loss_frame(column_2, 1)
+        self.__create_multi_gpu_frame(column_2, 0)
+        self.__create_masked_frame(column_2, 1)
+        self.__create_loss_frame(column_2, 2)
 
     def __setup_pixart_alpha_ui(self, column_0, column_1, column_2):
         self.__create_base_frame(column_0, 0)
@@ -135,6 +140,7 @@ class TrainingTab:
         self.__create_prior_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
+        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2, supports_vb_loss=True)
 
@@ -148,6 +154,7 @@ class TrainingTab:
         self.__create_transformer_frame(column_1, 1, supports_guidance_scale=True)
         self.__create_noise_frame(column_1, 2)
 
+        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -160,6 +167,7 @@ class TrainingTab:
         self.__create_prior_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
+        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -173,8 +181,14 @@ class TrainingTab:
         self.__create_transformer_frame(column_1, 1, supports_guidance_scale=True)
         self.__create_noise_frame(column_1, 2)
 
+        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
+
+    def __create_multi_gpu_frame(self, master, row):
+        """Create the multi-GPU settings frame"""
+        multi_gpu_frame = MultiGPUFrame(master=master, ui_state=self.ui_state)
+        multi_gpu_frame.grid(row=row, column=0, padx=5, pady=5, sticky="nsew")
 
     def __create_base_frame(self, master, row):
         frame = ctk.CTkFrame(master=master, corner_radius=5)

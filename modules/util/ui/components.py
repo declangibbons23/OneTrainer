@@ -338,20 +338,6 @@ def progress(master, row, column):
     return component
 
 
-def text(master, row, column, text, colspan=1, height=4, pad=PAD, tooltip=None, wide_tooltip=False):
-    """
-    Create a text widget for displaying multiline text.
-    """
-    component = ctk.CTkTextbox(master, height=height*20, wrap="word")
-    component.grid(row=row, column=column, columnspan=colspan, padx=pad, pady=pad, sticky="nsew")
-    component.insert("1.0", text)
-    component.configure(state="disabled")  # Make it read-only
-    
-    if tooltip:
-        ToolTip(component, tooltip, wide=wide_tooltip)
-    
-    return component
-
 def double_progress(master, row, column, label_1, label_2):
     frame = ctk.CTkFrame(master, fg_color="transparent")
     frame.grid(row=row, column=column, padx=0, pady=0, sticky="nsew")
