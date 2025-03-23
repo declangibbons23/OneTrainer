@@ -107,7 +107,12 @@ def train_worker(rank, world_size, args):
     
     # Load the training configuration
     with open(args.config_path, 'r') as f:
-        config_json = json.load(f)
+        try:
+            config_json = json.load(f)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse config file: {e}")
+            logger.error("Check if the config file is valid JSON")
+            return 1
     
     # Set up multi-GPU specific config options
     config_json["enable_multi_gpu"] = True
@@ -117,7 +122,12 @@ def train_worker(rank, world_size, args):
     config_json["distributed_data_loading"] = args.distributed_data_loading
     
     # Create the train config object
-    train_config = TrainConfig.from_dict(config_json)
+    try:
+        train_config = TrainConfig.from_dict(config_json)
+    except Exception as e:
+        logger.error(f"Failed to create TrainConfig from dict: {e}")
+        logger.error(f"Config JSON: {config_json}")
+        return 1
     
     # Create arguments object
     train_args = TrainArgs()

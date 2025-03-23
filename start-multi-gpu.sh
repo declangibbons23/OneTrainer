@@ -52,8 +52,10 @@ read -p "Use torchrun for launching? Recommended. (y/n): " USE_TORCHRUN
 
 if [[ "$USE_TORCHRUN" == "n" || "$USE_TORCHRUN" == "N" ]]; then
     echo "Launching with torch.multiprocessing.spawn"
-    run_python_in_active_env scripts/train_multi_gpu.py "--config-path=$CONFIG_PATH" "--num-gpus=$NUM_GPUS_TO_USE" "--spawn"
+    # Use a simpler syntax that avoids variable expansion issues
+    run_python_in_active_env scripts/train_multi_gpu.py --config-path "$CONFIG_PATH" --num-gpus "$NUM_GPUS_TO_USE" --spawn
 else
     echo "Launching with torchrun"
-    run_python_in_active_env scripts/train_multi_gpu.py "--config-path=$CONFIG_PATH" "--num-gpus=$NUM_GPUS_TO_USE"
+    # Use a simpler syntax that avoids variable expansion issues
+    run_python_in_active_env scripts/train_multi_gpu.py --config-path "$CONFIG_PATH" --num-gpus "$NUM_GPUS_TO_USE"
 fi
