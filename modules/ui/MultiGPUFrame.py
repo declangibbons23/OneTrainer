@@ -156,43 +156,59 @@ class MultiGPUFrame(ttk.LabelFrame):
             )
             no_gpu_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=5, pady=2)
             row += 1
-def _update_ui_state(self):
-    """Update the UI state with current multi-GPU settings"""
-    if not self.ui_state or not hasattr(self.ui_state, 'train_config'):
-        return
-        
-    try:
-        # Get current values
-        enable_multi_gpu = self.enable_multi_gpu.get()
-        backend = self.backend.get()
-        distributed_data = self.distributed_data_loading.get()
-        use_torchrun = self.use_torchrun.get()
-        lr_scaling = self.lr_scaling.get()
-        
-        # Update config
-        self.ui_state.train_config.enable_multi_gpu = enable_multi_gpu
-        self.ui_state.train_config.distributed_backend = backend
-        self.ui_state.train_config.distributed_data_loading = distributed_data
-        self.ui_state.train_config.use_torchrun = use_torchrun
-        self.ui_state.train_config.lr_scaling = lr_scaling
-        
-        # Set world size if multi-GPU is enabled
-        if enable_multi_gpu:
-            import torch
-            self.ui_state.train_config.world_size = torch.cuda.device_count()
-        else:
-            self.ui_state.train_config.world_size = None
-            self.ui_state.train_config.local_rank = None
+    def _update_ui_state(self):
+        """Update the UI state with current multi-GPU settings"""
+        if not self.ui_state or not hasattr(self.ui_state, 'train_config'):
+            return
             
-        print(f"Updated multi-GPU settings: enabled={enable_multi_gpu}, backend={backend}")
-        
-    except Exception as e:
-        print(f"Error updating multi-GPU settings: {e}")
-        import traceback
-        traceback.print_exc()
+        try:
+            # Get current values
+            enable_multi_gpu = self.enable_multi_gpu.get()
+            backend = self.backend.get()
+            distributed_data = self.distributed_data_loading.get()
+            use_torchrun = self.use_torchrun.get()
+            lr_scaling = self.lr_scaling.get()
+            
+            try:
+                # Use the new setup method
+                self.ui_state.train_config.setup_multi_gpu(
+                    enable=enable_multi_gpu,
+                    backend=backend
+                )
+                
+                # Update additional settings
+                self.ui_state.train_config.distributed_data_loading = distributed_data
+                self.ui_state.train_config.use_torchrun = use_torchrun
+                self.ui_state.train_config.lr_scaling = lr_scaling
+                
+            print(f"Updated multi-GPU settings: enabled={enable_multi_gpu}, backend={backend}")
+            
+        except ValueError as e:
+            # Handle expected errors (like not enough GPUs)
+            print(f"Multi-GPU configuration error: {e}")
+            # Reset UI state
+            self.enable_multi_gpu.set(False)
+            self._show_error(str(e))
+        except Exception as e:
+            # Handle unexpected errors
             print(f"Error updating multi-GPU settings: {e}")
+            import traceback
+            traceback.print_exc()
+            self._show_error("Unexpected error configuring multi-GPU settings")
+            
+    def _show_error(self, message: str):
+        """Show error message in UI"""
+        import tkinter as tk
+        from tkinter import messagebox
+        
+        # Show error dialog
+        messagebox.showerror(
+            "Multi-GPU Configuration Error",
+            message
+        )
 
     def update_from_config(self, config):
+        """Update UI elements from config"""
         if hasattr(config, 'enable_multi_gpu'):
             self.enable_multi_gpu.set(config.enable_multi_gpu)
         
@@ -204,3 +220,9 @@ def _update_ui_state(self):
         
         if hasattr(config, 'use_torchrun'):
             self.use_torchrun.set(config.use_torchrun)
+            
+        if hasattr(config, 'lr_scaling'):
+            self.lr_scaling.set(config.lr_scaling)
+            
+        # Update UI state to ensure all settings are synchronized
+        self._update_ui_state()

@@ -278,6 +278,29 @@ class TrainConfig(BaseConfig):
     tensorboard_expose: bool
     tensorboard_port: str
     validation: bool
+    
+    def setup_multi_gpu(self, enable: bool = True, backend: str = "nccl"):
+        """
+        Configure settings for multi-GPU training
+        
+        Args:
+            enable: Whether to enable multi-GPU training
+            backend: The distributed backend to use ("nccl" or "gloo")
+        """
+        self.enable_multi_gpu = enable
+        self.distributed_backend = backend
+        self.distributed_data_loading = True  # Enable by default for better performance
+        self.use_torchrun = True  # Use torchrun by default
+        self.lr_scaling = True  # Scale learning rate by default
+        
+        if enable:
+            import torch
+            self.world_size = torch.cuda.device_count()
+            if self.world_size < 2:
+                raise ValueError(f"Multi-GPU training requires at least 2 GPUs, but only {self.world_size} detected")
+        else:
+            self.world_size = None
+            self.local_rank = None
     validate_after: float
     validate_after_unit: TimeUnit
     continue_last_backup: bool
