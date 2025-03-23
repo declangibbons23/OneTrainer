@@ -582,11 +582,26 @@ class TrainUI(ctk.CTk):
             on_update_train_progress=self.on_update_train_progress,
             on_update_status=self.on_update_status,
         )
-
-        if self.train_config.cloud.enabled:
-            trainer = CloudTrainer(self.train_config, self.training_callbacks, self.training_commands, reattach=self.cloud_tab.reattach)
-        else:
-            ZLUDA.initialize_devices(self.train_config)
+if self.train_config.cloud.enabled:
+    trainer = CloudTrainer(self.train_config, self.training_callbacks, self.training_commands, reattach=self.cloud_tab.reattach)
+elif hasattr(self.train_config, 'enable_multi_gpu') and self.train_config.enable_multi_gpu:
+    # Use DistributedTrainer for multi-GPU
+    from modules.trainer.DistributedTrainer import DistributedTrainer
+    print(f"Starting distributed training with {torch.cuda.device_count()} GPUs...")
+    ZLUDA.initialize_devices(self.train_config)
+    
+    # Set local_rank to 0 for the main process
+    if not hasattr(self.train_config, 'local_rank'):
+        self.train_config.local_rank = 0
+    
+    # Default to world_size based on GPU count if not set
+    if not hasattr(self.train_config, 'world_size'):
+        self.train_config.world_size = torch.cuda.device_count()
+        
+    trainer = DistributedTrainer(self.train_config, self.training_callbacks, self.training_commands, local_rank=0)
+else:
+    ZLUDA.initialize_devices(self.train_config)
+    trainer = GenericTrainer(self.train_config, self.training_callbacks, self.training_commands)
             trainer = GenericTrainer(self.train_config, self.training_callbacks, self.training_commands)
 
         try:

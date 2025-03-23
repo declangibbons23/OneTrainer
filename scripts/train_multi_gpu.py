@@ -1,4 +1,24 @@
 #!/usr/bin/env python3
+
+# Import the script_imports utility first to set up Python path correctly
+try:
+    from util.import_util import script_imports
+    script_imports()
+except ImportError:
+    import sys
+    import os
+    # Add the project root to Python path if needed
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root_dir not in sys.path:
+        sys.path.append(root_dir)
+    try:
+        from util.import_util import script_imports
+        script_imports()
+    except ImportError as e:
+        print(f"Error importing script_imports: {e}")
+        print("Make sure you're running this script from the OneTrainer directory.")
+        sys.exit(1)
+
 import os
 import sys
 import json
@@ -38,6 +58,8 @@ try:
     from modules.util.config.TrainConfig import TrainConfig
     from modules.trainer.DistributedTrainer import DistributedTrainer
     from modules.util.distributed_util import setup_distributed, cleanup_distributed
+    from modules.util.callbacks.TrainCallbacks import TrainCallbacks
+    from modules.util.commands.TrainCommands import TrainCommands
 except ImportError as e:
     logger.error(f"Failed to import OneTrainer modules: {e}")
     logger.error("Make sure you're running this script from the OneTrainer directory.")
@@ -104,14 +126,21 @@ def train_worker(rank, world_size, args):
     # Only the master process should save models and show progress
     is_master = rank == 0
     
-    # Setup the trainer
+    # Create callbacks and commands for training
+    callbacks = TrainCallbacks()
+    commands = TrainCommands()
+    
+    # Set devices in config
+    train_config.train_device = f"cuda:{rank}"
+    train_config.temp_device = "cpu"
+    train_config.local_rank = rank
+    
+    # Setup the trainer with proper parameters
     trainer = DistributedTrainer(
         train_config=train_config,
-        train_args=train_args,
-        train_device=torch.device(f"cuda:{rank}"),
-        temp_device=torch.device("cpu"),
-        rank=rank,
-        world_size=world_size
+        callbacks=callbacks,
+        commands=commands,
+        local_rank=rank
     )
     
     # Run the training
