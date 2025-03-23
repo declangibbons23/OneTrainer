@@ -45,12 +45,48 @@ if "%CONFIG_PATH%" == "" (
 :: Check if the user wants to use torchrun or torch.multiprocessing
 set /p USE_TORCHRUN="Use torchrun for launching? Recommended. (y/n): "
 
+:: Create a temporary Python script to avoid command-line parsing issues
+set TEMP_SCRIPT=%TEMP%\multi_gpu_launcher_%RANDOM%.py
+echo import sys > %TEMP_SCRIPT%
+echo import os >> %TEMP_SCRIPT%
+echo import subprocess >> %TEMP_SCRIPT%
+echo sys.path.append(".") >> %TEMP_SCRIPT%
+
 if /i "%USE_TORCHRUN%" == "n" (
     echo Launching with torch.multiprocessing.spawn
-    python scripts/train_multi_gpu.py "--config-path=%CONFIG_PATH%" "--num-gpus=%NUM_GPUS_TO_USE%" "--spawn"
+    echo from scripts.train_multi_gpu import main >> %TEMP_SCRIPT%
+    echo import argparse >> %TEMP_SCRIPT%
+    echo. >> %TEMP_SCRIPT%
+    echo parser = argparse.ArgumentParser() >> %TEMP_SCRIPT%
+    echo parser.add_argument("--config-path", type=str, default=r"%CONFIG_PATH%") >> %TEMP_SCRIPT%
+    echo parser.add_argument("--num-gpus", type=int, default=%NUM_GPUS_TO_USE%) >> %TEMP_SCRIPT%
+    echo parser.add_argument("--spawn", action="store_true", default=True) >> %TEMP_SCRIPT%
+    echo args = parser.parse_args() >> %TEMP_SCRIPT%
+    echo. >> %TEMP_SCRIPT%
+    echo main(args) >> %TEMP_SCRIPT%
 ) else (
     echo Launching with torchrun
-    python scripts/train_multi_gpu.py "--config-path=%CONFIG_PATH%" "--num-gpus=%NUM_GPUS_TO_USE%"
+    echo cmd = [ >> %TEMP_SCRIPT%
+    echo     sys.executable, >> %TEMP_SCRIPT%
+    echo     "-m", "torch.distributed.run", >> %TEMP_SCRIPT%
+    echo     f"--nproc_per_node=%NUM_GPUS_TO_USE%", >> %TEMP_SCRIPT%
+    echo     f"--master_port=12355", >> %TEMP_SCRIPT%
+    echo     "scripts/train_multi_gpu.py", >> %TEMP_SCRIPT%
+    echo     f"--config-path=%CONFIG_PATH%", >> %TEMP_SCRIPT%
+    echo     f"--num-gpus=%NUM_GPUS_TO_USE%", >> %TEMP_SCRIPT%
+    echo ] >> %TEMP_SCRIPT%
+    echo. >> %TEMP_SCRIPT%
+    echo print(f"Executing: {' '.join(cmd)}") >> %TEMP_SCRIPT%
+    echo process = subprocess.run(cmd) >> %TEMP_SCRIPT%
+    echo sys.exit(process.returncode) >> %TEMP_SCRIPT%
 )
 
+:: Run the temporary script
+python %TEMP_SCRIPT%
+
+:: Clean up
+del %TEMP_SCRIPT%
+
+echo.
+echo Multi-GPU training completed.
 pause

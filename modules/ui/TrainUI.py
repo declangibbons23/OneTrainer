@@ -588,83 +588,79 @@ class TrainUI(ctk.CTk):
         if self.train_config.cloud.enabled:
             trainer = CloudTrainer(self.train_config, self.training_callbacks, self.training_commands, reattach=self.cloud_tab.reattach)
         elif hasattr(self.train_config, 'enable_multi_gpu') and self.train_config.enable_multi_gpu:
-            # For multi-GPU training, we need to launch the train_multi_gpu.py script
-            import subprocess
-            import sys
-            import tempfile
-            import os
-            from pathlib import Path
+            # Launch multi-GPU training directly, using Python's multiprocessing
+            import torch.distributed as dist
+            import torch.multiprocessing as mp
+            from modules.util.distributed_util import setup_distributed
             
-            # Save the config to a temporary file
-            temp_config = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-            try:
-                # Convert config to JSON and write to temp file
-                json.dump(self.train_config.to_dict(), temp_config)
-                temp_config.close()
+            print(f"Starting distributed training with {torch.cuda.device_count()} GPUs...")
+            
+            # Get number of GPUs to use
+            world_size = torch.cuda.device_count()
+            if world_size < 2:
+                raise ValueError(f"Multi-GPU training requires at least 2 GPUs, but only {world_size} detected")
+            
+            # Set required distributed attributes
+            if not hasattr(self.train_config, 'world_size'):
+                self.train_config.world_size = world_size
+            
+            backend = getattr(self.train_config, 'distributed_backend', 'nccl')
+            
+            # Configure distributed training
+            def _distributed_worker(rank, world_size, config, callbacks, commands):
+                # Set CUDA device for this process
+                torch.cuda.set_device(rank)
                 
-                print(f"Starting distributed training with {torch.cuda.device_count()} GPUs...")
+                # Initialize process group
+                setup_distributed(rank, world_size, backend)
                 
-                # Get number of GPUs to use
-                num_gpus = torch.cuda.device_count()
-                if num_gpus < 2:
-                    raise ValueError(f"Multi-GPU training requires at least 2 GPUs, but only {num_gpus} detected")
+                # Set device-specific configs
+                config.train_device = f"cuda:{rank}"
+                config.local_rank = rank
                 
-                # Construct the command to run train_multi_gpu.py
-                script_path = str(Path(__file__).parent.parent.parent / "scripts" / "train_multi_gpu.py")
+                # Create and run distributed trainer
+                from modules.trainer.DistributedTrainer import DistributedTrainer
+                print(f"[Rank {rank}] Initializing DistributedTrainer")
                 
-                # Prepare the command to execute
-                cmd = [
-                    sys.executable,
-                    script_path,
-                    f"--config-path={temp_config.name}",
-                    f"--num-gpus={num_gpus}",
-                ]
+                # Initialize trainer
+                trainer = DistributedTrainer(
+                    train_config=config,
+                    callbacks=callbacks if rank == 0 else None,  # Only main process gets callbacks
+                    commands=commands if rank == 0 else None,    # Only main process gets commands
+                    local_rank=rank
+                )
                 
-                # Add backend and other options
-                if hasattr(self.train_config, 'distributed_backend'):
-                    cmd.append(f"--distributed-backend={self.train_config.distributed_backend}")
-                
-                if hasattr(self.train_config, 'distributed_data_loading') and self.train_config.distributed_data_loading:
-                    cmd.append("--distributed-data-loading")
-                
-                # Use torchrun (recommended) or spawn based on config
-                if not hasattr(self.train_config, 'use_torchrun') or self.train_config.use_torchrun:
-                    # Using torchrun (default)
-                    print("Using torchrun launcher for distributed training")
-                else:
-                    # Using torch.multiprocessing.spawn
-                    print("Using multiprocessing.spawn for distributed training")
-                    cmd.append("--spawn")
-                
-                # Start the subprocess
-                print(f"Executing: {' '.join(cmd)}")
-                process = subprocess.Popen(cmd)
-                
-                # Wait for the process to complete
-                process.wait()
-                
-                # Check the return code
-                if process.returncode != 0:
-                    print(f"Error: Multi-GPU training process exited with code {process.returncode}")
-                    raise RuntimeError(f"Multi-GPU training failed with exit code {process.returncode}")
-                
-                print("Multi-GPU training completed successfully")
-                
-            finally:
-                # Clean up the temporary file
                 try:
-                    os.unlink(temp_config.name)
-                except:
-                    pass
+                    print(f"[Rank {rank}] Starting training")
+                    trainer.start()
+                    trainer.train()
+                except Exception as e:
+                    print(f"[Rank {rank}] Error during training: {e}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    print(f"[Rank {rank}] Ending training")
+                    trainer.end()
+                    # Clean up process group
+                    dist.destroy_process_group()
             
-            # Create a dummy trainer to satisfy the rest of the code
+            # Use spawn method to launch processes
+            print("Launching training processes...")
+            mp.spawn(
+                _distributed_worker,
+                args=(world_size, self.train_config, self.training_callbacks, self.training_commands),
+                nprocs=world_size,
+                join=True
+            )
+            
+            # Create a dummy trainer to satisfy the return expectation
             from modules.trainer.BaseTrainer import BaseTrainer
             class DummyTrainer(BaseTrainer):
                 def start(self): pass
                 def train(self): pass
                 def end(self): pass
             
-            trainer = DummyTrainer(self.train_config, None, None)
+            trainer = DummyTrainer(self.train_config, self.training_callbacks, self.training_commands)
         else:
             ZLUDA.initialize_devices(self.train_config)
             trainer = GenericTrainer(self.train_config, self.training_callbacks, self.training_commands)

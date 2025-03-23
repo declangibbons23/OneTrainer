@@ -16,8 +16,13 @@ if ! run_python_in_active_env -c "import torch; print('CUDA available:', torch.c
     exit 1
 fi
 
+# Execute a Python command directly and capture its output
+get_gpu_count() {
+    run_python_in_active_env -c "import torch; print(torch.cuda.device_count())" 2>/dev/null
+}
+
 # Get number of available GPUs
-NUM_GPUS=$(run_python_in_active_env -c "import torch; print(torch.cuda.device_count())")
+NUM_GPUS=$(get_gpu_count)
 echo "CUDA available: Yes"
 echo "Number of GPUs: $NUM_GPUS"
 
@@ -52,10 +57,43 @@ read -p "Use torchrun for launching? Recommended. (y/n): " USE_TORCHRUN
 
 if [[ "$USE_TORCHRUN" == "n" || "$USE_TORCHRUN" == "N" ]]; then
     echo "Launching with torch.multiprocessing.spawn"
-    # Use a simpler syntax that avoids variable expansion issues
-    run_python_in_active_env scripts/train_multi_gpu.py --config-path "$CONFIG_PATH" --num-gpus "$NUM_GPUS_TO_USE" --spawn
+    # Direct approach without variable substitution
+    run_python_in_active_env << EOF
+import sys
+sys.path.append(".")
+from scripts.train_multi_gpu import main
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--config-path", type=str, default="$CONFIG_PATH")
+parser.add_argument("--num-gpus", type=int, default=$NUM_GPUS_TO_USE)
+parser.add_argument("--spawn", action="store_true", default=True)
+args = parser.parse_args()
+
+main(args)
+EOF
 else
     echo "Launching with torchrun"
-    # Use a simpler syntax that avoids variable expansion issues
-    run_python_in_active_env scripts/train_multi_gpu.py --config-path "$CONFIG_PATH" --num-gpus "$NUM_GPUS_TO_USE"
+    # Direct approach without variable substitution
+    run_python_in_active_env << EOF
+import sys
+import os
+import subprocess
+sys.path.append(".")
+
+# Execute torchrun
+cmd = [
+    sys.executable,
+    "-m", "torch.distributed.run",
+    f"--nproc_per_node=$NUM_GPUS_TO_USE",
+    f"--master_port=12355",
+    "scripts/train_multi_gpu.py",
+    f"--config-path=$CONFIG_PATH",
+    f"--num-gpus=$NUM_GPUS_TO_USE",
+]
+
+print(f"Executing: {' '.join(cmd)}")
+process = subprocess.run(cmd)
+sys.exit(process.returncode)
+EOF
 fi
