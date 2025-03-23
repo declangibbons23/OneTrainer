@@ -158,17 +158,33 @@ class MultiGPUFrame(ttk.LabelFrame):
             row += 1
 
     def _update_ui_state(self):
-        if self.ui_state:
+        # Safety check for UI state and train_config
+        if not self.ui_state:
+            return
+            
+        # Make sure train_config exists and is not None
+        if not hasattr(self.ui_state, 'train_config') or self.ui_state.train_config is None:
+            return
+            
+        # Update train_config with multi-GPU settings
+        try:
+            # Add enable_multi_gpu attribute if it doesn't exist
             if not hasattr(self.ui_state.train_config, 'enable_multi_gpu'):
-                self.ui_state.train_config.enable_multi_gpu = self.enable_multi_gpu.get()
-                self.ui_state.train_config.distributed_backend = self.backend.get()
-                self.ui_state.train_config.distributed_data_loading = self.distributed_data_loading.get()
-                self.ui_state.train_config.use_torchrun = self.use_torchrun.get()
-            else:
-                self.ui_state.train_config.enable_multi_gpu = self.enable_multi_gpu.get()
-                self.ui_state.train_config.distributed_backend = self.backend.get()
-                self.ui_state.train_config.distributed_data_loading = self.distributed_data_loading.get()
-                self.ui_state.train_config.use_torchrun = self.use_torchrun.get()
+                setattr(self.ui_state.train_config, 'enable_multi_gpu', False)
+                setattr(self.ui_state.train_config, 'distributed_backend', "nccl")
+                setattr(self.ui_state.train_config, 'distributed_data_loading', True)
+                setattr(self.ui_state.train_config, 'use_torchrun', True)
+                setattr(self.ui_state.train_config, 'lr_scaling', True)
+                
+            # Update settings
+            self.ui_state.train_config.enable_multi_gpu = self.enable_multi_gpu.get()
+            self.ui_state.train_config.distributed_backend = self.backend.get()
+            self.ui_state.train_config.distributed_data_loading = self.distributed_data_loading.get()
+            self.ui_state.train_config.use_torchrun = self.use_torchrun.get()
+            self.ui_state.train_config.lr_scaling = self.lr_scaling.get()
+        except Exception as e:
+            # Print error but don't crash
+            print(f"Error updating multi-GPU settings: {e}")
 
     def update_from_config(self, config):
         if hasattr(config, 'enable_multi_gpu'):

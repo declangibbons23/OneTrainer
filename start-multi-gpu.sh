@@ -1,30 +1,25 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Make the script executable
-chmod +x "$(dirname "$0")/start-multi-gpu.sh"
+set -e
 
-# Check if Python is available
-if ! command -v python &> /dev/null; then
-    echo "Python not found. Please install Python and try again."
-    exit 1
-fi
+# Use the same library as start-ui.sh to properly set up the environment
+source "${BASH_SOURCE[0]%/*}/lib.include.sh"
 
-# Check if PyTorch is installed
-if ! python -c "import torch" &> /dev/null; then
-    echo "PyTorch not found. Please install PyTorch and try again."
-    exit 1
-fi
+# Prepare the environment (activates conda env)
+prepare_runtime_environment
 
-# Check if CUDA is available
-if ! python -c "import torch; cuda_available = torch.cuda.is_available(); print('CUDA available:', cuda_available); print('Number of GPUs:', torch.cuda.device_count() if cuda_available else 0); exit(0 if cuda_available else 1)"; then
+# Now run Python commands in the proper environment
+echo "Checking for CUDA support..."
+if ! run_python_in_active_env -c "import torch; print('CUDA available:', torch.cuda.is_available()); exit(0 if torch.cuda.is_available() else 1)" &> /dev/null; then
     echo "CUDA is not available. Multi-GPU training requires CUDA support."
     echo "Please install CUDA and PyTorch with CUDA support, or use single-GPU training."
     exit 1
 fi
-echo
 
 # Get number of available GPUs
-NUM_GPUS=$(python -c "import torch; print(torch.cuda.device_count())")
+NUM_GPUS=$(run_python_in_active_env -c "import torch; print(torch.cuda.device_count())")
+echo "CUDA available: Yes"
+echo "Number of GPUs: $NUM_GPUS"
 
 if [ "$NUM_GPUS" -lt 2 ]; then
     echo "Only $NUM_GPUS GPU detected. Multi-GPU training requires at least 2 GPUs."
@@ -57,8 +52,8 @@ read -p "Use torchrun for launching? Recommended. (y/n): " USE_TORCHRUN
 
 if [[ "$USE_TORCHRUN" == "n" || "$USE_TORCHRUN" == "N" ]]; then
     echo "Launching with torch.multiprocessing.spawn"
-    python -m scripts.train_multi_gpu --config-path "$CONFIG_PATH" --num-gpus $NUM_GPUS_TO_USE --spawn
+    run_python_in_active_env "scripts/train_multi_gpu.py" --config-path "$CONFIG_PATH" --num-gpus $NUM_GPUS_TO_USE --spawn
 else
     echo "Launching with torchrun"
-    python -m scripts.train_multi_gpu --config-path "$CONFIG_PATH" --num-gpus $NUM_GPUS_TO_USE
+    run_python_in_active_env "scripts/train_multi_gpu.py" --config-path "$CONFIG_PATH" --num-gpus $NUM_GPUS_TO_USE
 fi

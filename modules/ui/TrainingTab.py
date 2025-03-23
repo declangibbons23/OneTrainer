@@ -195,21 +195,56 @@ class TrainingTab:
         """Create the multi-GPU settings frame"""
         if not 'MULTI_GPU_AVAILABLE' in globals() or MULTI_GPU_AVAILABLE:
             try:
+                # Ensure train_config has multi-GPU settings initialized
+                if not hasattr(self.train_config, 'enable_multi_gpu'):
+                    setattr(self.train_config, 'enable_multi_gpu', False)
+                if not hasattr(self.train_config, 'distributed_backend'):
+                    setattr(self.train_config, 'distributed_backend', "nccl")
+                if not hasattr(self.train_config, 'distributed_data_loading'):
+                    setattr(self.train_config, 'distributed_data_loading', True)
+                if not hasattr(self.train_config, 'use_torchrun'):
+                    setattr(self.train_config, 'use_torchrun', True)
+                if not hasattr(self.train_config, 'lr_scaling'):
+                    setattr(self.train_config, 'lr_scaling', True)
+                
+                # Create multi-GPU frame
                 multi_gpu_frame = MultiGPUFrame(master=master, ui_state=self.ui_state)
                 multi_gpu_frame.grid(row=row, column=0, padx=5, pady=5, sticky="nsew")
                 
-                # If MultiGPUFrame was successfully created, update it from config
-                if hasattr(self.train_config, 'enable_multi_gpu'):
-                    multi_gpu_frame.update_from_config(self.train_config)
+                # Update frame from config
+                multi_gpu_frame.update_from_config(self.train_config)
+                
+                # Add tooltip about GPU count
+                gpu_count = 0
+                try:
+                    import torch
+                    gpu_count = torch.cuda.device_count()
+                    if gpu_count < 2:
+                        info_label = ctk.CTkLabel(
+                            multi_gpu_frame,
+                            text=f"Note: {gpu_count} GPU{'s' if gpu_count != 1 else ''} detected. Multi-GPU requires at least 2 GPUs.",
+                            font=("Roboto", 10),
+                            text_color="orange"
+                        )
+                        info_label.grid(row=100, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+                except:
+                    pass
+                    
             except Exception as e:
                 # If something goes wrong, create a basic frame with info message
                 frame = ctk.CTkFrame(master=master, corner_radius=5)
                 frame.grid(row=row, column=0, padx=5, pady=5, sticky="nsew")
                 frame.grid_columnconfigure(0, weight=1)
                 
+                import traceback
+                error_text = f"Multi-GPU settings unavailable.\n{str(e)}"
+                print(f"Error creating multi-GPU frame: {e}")
+                print(traceback.format_exc())
+                
                 info_label = ctk.CTkLabel(
                     frame,
-                    text="Multi-GPU settings unavailable.\nCheck the console for errors."
+                    text=error_text,
+                    text_color="red"
                 )
                 info_label.grid(row=0, column=0, padx=10, pady=10)
 
