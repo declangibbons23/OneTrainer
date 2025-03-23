@@ -7,6 +7,7 @@ from typing import Any
 from modules.util.config.BaseConfig import BaseConfig
 from modules.util.config.CloudConfig import CloudConfig
 from modules.util.config.ConceptConfig import ConceptConfig
+from modules.util.config.DistributedConfig import DistributedConfig
 from modules.util.config.SampleConfig import SampleConfig
 from modules.util.config.SecretsConfig import SecretsConfig
 from modules.util.enum.AudioFormat import AudioFormat
@@ -410,6 +411,9 @@ class TrainConfig(BaseConfig):
     save_every_unit: TimeUnit
     save_skip_first: int
     save_filename_prefix: str
+
+    # distributed training
+    distributed: DistributedConfig
 
     # secrets - not saved into config file
     secrets: SecretsConfig
@@ -930,6 +934,9 @@ class TrainConfig(BaseConfig):
         data.append(("save_every_unit", TimeUnit.NEVER, TimeUnit, False))
         data.append(("save_skip_first", 0, int, False))
         data.append(("save_filename_prefix", "", str, False))
+
+        # distributed
+        data.append(("distributed", DistributedConfig.default_values(), DistributedConfig, False))
 
         # secrets
         secrets = SecretsConfig.default_values()

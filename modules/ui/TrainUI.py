@@ -13,6 +13,7 @@ from modules.ui.CaptionUI import CaptionUI
 from modules.ui.CloudTab import CloudTab
 from modules.ui.ConceptTab import ConceptTab
 from modules.ui.ConvertModelUI import ConvertModelUI
+from modules.ui.DistributedTrainingTab import DistributedTrainingTab
 from modules.ui.LoraTab import LoraTab
 from modules.ui.ModelTab import ModelTab
 from modules.ui.ProfilingWindow import ProfilingWindow
@@ -149,6 +150,7 @@ class TrainUI(ctk.CTk):
         self.tabview.grid(row=0, column=0, sticky="nsew")
 
         self.general_tab = self.create_general_tab(self.tabview.add("general"))
+        self.distributed_tab = self.create_distributed_tab(self.tabview.add("distributed"))
         self.model_tab = self.create_model_tab(self.tabview.add("model"))
         self.data_tab = self.create_data_tab(self.tabview.add("data"))
         self.create_concepts_tab(self.tabview.add("concepts"))
@@ -163,6 +165,9 @@ class TrainUI(ctk.CTk):
 
         return frame
 
+    def create_distributed_tab(self, master):
+        return DistributedTrainingTab(master, self.train_config, self.ui_state)
+        
     def create_general_tab(self, master):
         frame = ctk.CTkScrollableFrame(master, fg_color="transparent")
         frame.grid_columnconfigure(0, weight=0)
