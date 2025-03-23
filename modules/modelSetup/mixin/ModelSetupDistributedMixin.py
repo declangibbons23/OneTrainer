@@ -1,119 +1,154 @@
-from typing import Dict, Optional, List, Any, Type
+"""
+Mixin for distributed model setup capabilities.
 
+This mixin provides common functionality for setting up models for
+distributed training that can be inherited by specific model setup implementations.
+"""
+
+import os
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from modules.model.BaseModel import BaseModel
+from modules.util import distributed
 from modules.util.config.TrainConfig import TrainConfig
-from modules.util.distributed import (
-    is_distributed_available, 
-    is_main_process, 
-    get_rank, 
-    get_local_rank,
-    wrap_model_for_ddp
-)
 
 
 class ModelSetupDistributedMixin:
     """
-    A mixin that provides distributed training functionality for model setups.
+    Mixin providing distributed model setup capabilities.
+    
+    This mixin can be added to any model setup to provide distributed
+    functionality such as wrapping models with DDP, optimizing for
+    distributed training, and ensuring proper synchronization.
     """
     
-    def apply_ddp_to_model_component(
-        self, 
-        component: nn.Module,
-        find_unused_parameters: bool = False,
-        gradient_as_bucket_view: bool = True,
-        broadcast_buffers: bool = True,
-        device_ids: Optional[List[int]] = None
-    ) -> DDP:
+    def is_distributed(self, config: TrainConfig) -> bool:
         """
-        Wraps a model component with DDP.
+        Check if distributed training is enabled and available.
         
         Args:
-            component: The model component to wrap.
-            find_unused_parameters: Whether to find unused parameters in the forward pass.
-            gradient_as_bucket_view: Whether to use gradient as bucket view for memory efficiency.
-            broadcast_buffers: Whether to broadcast buffers in the beginning of forward pass.
-            device_ids: Device IDs to use. Defaults to [local_rank].
+            config: Training configuration
             
         Returns:
-            The wrapped model component.
+            True if distributed training is enabled and available
         """
-        # If distributed training is not enabled or available, return the component as is
-        if not is_distributed_available():
-            return component
+        return (hasattr(config, 'distributed') and 
+                config.distributed and 
+                config.distributed.enabled and
+                distributed.is_distributed_available())
+    
+    def wrap_model_for_distributed(
+        self,
+        model: nn.Module,
+        device_id: int,
+        config: TrainConfig
+    ) -> nn.Module:
+        """
+        Wrap a model with DistributedDataParallel.
+        
+        Args:
+            model: Model to wrap
+            device_id: Device ID
+            config: Training configuration
             
-        return wrap_model_for_ddp(
-            component,
-            device_ids=device_ids,
+        Returns:
+            The model wrapped with DDP if distributed training is enabled
+        """
+        if not self.is_distributed(config):
+            return model
+        
+        print(f"[Rank {distributed.get_rank()}] Wrapping model with DDP")
+        
+        # Get DDP settings from config
+        find_unused_parameters = config.distributed.find_unused_parameters
+        gradient_as_bucket_view = config.distributed.gradient_as_bucket_view
+        bucket_cap_mb = config.distributed.bucket_cap_mb or 25
+        
+        # Move model to the correct device
+        model = model.to(device_id)
+        
+        # Wrap model with DDP
+        wrapped_model = DDP(
+            model,
+            device_ids=[device_id],
+            output_device=device_id,
             find_unused_parameters=find_unused_parameters,
             gradient_as_bucket_view=gradient_as_bucket_view,
-            broadcast_buffers=broadcast_buffers
+            bucket_cap_mb=bucket_cap_mb,
         )
+        
+        return wrapped_model
     
-    def setup_for_distributed_training(
+    def setup_model_for_distributed(
         self,
         model: BaseModel,
         config: TrainConfig
-    ):
+    ) -> BaseModel:
         """
-        Sets up a model for distributed training based on the configuration.
-        Override this method in your model setup implementation.
+        Set up a model for distributed training.
+        
+        This method sets up the model parts that need to be wrapped with DDP.
         
         Args:
-            model: The model to set up for distributed training.
-            config: The training configuration.
-        """
-        # To be implemented by specific model setup classes
-        pass
-        
-    def should_save_in_distributed(self) -> bool:
-        """
-        Determines if the current process should save model checkpoints.
-        In distributed mode, typically only the main process (rank 0) saves.
-        
-        Returns:
-            bool: True if this process should save, False otherwise.
-        """
-        return is_main_process()
-    
-    def unwrap_ddp_modules(self, model: BaseModel):
-        """
-        Unwraps DDP modules for saving or evaluation.
-        Override this method in your model setup implementation.
-        
-        Args:
-            model: The model to unwrap DDP modules from.
-        """
-        # To be implemented by specific model setup classes
-        pass
-    
-    def is_distributed_training_enabled(self, config: TrainConfig) -> bool:
-        """
-        Checks if distributed training is enabled and available.
-        
-        Args:
-            config: The training configuration.
+            model: Model to set up
+            config: Training configuration
             
         Returns:
-            bool: True if distributed training is enabled and available.
+            The model set up for distributed training
         """
-        return config.distributed.enabled and is_distributed_available()
+        if not self.is_distributed(config):
+            return model
+        
+        # Each subclass should implement this method
+        # based on its specific model structure
+        raise NotImplementedError("Subclasses must implement this method")
     
-    def get_ddp_params(self, config: TrainConfig) -> Dict[str, Any]:
+    def setup_optimizer_for_distributed(
+        self,
+        model: BaseModel,
+        config: TrainConfig
+    ) -> None:
         """
-        Gets parameters for DDP based on the configuration.
+        Set up an optimizer for distributed training.
+        
+        This method ensures the optimizer is properly configured for
+        distributed training, such as adjusting learning rates based
+        on the number of GPUs.
         
         Args:
-            config: The training configuration.
-            
-        Returns:
-            Dict containing DDP parameters.
+            model: Model to set up optimizer for
+            config: Training configuration
         """
-        return {
-            "find_unused_parameters": config.distributed.find_unused_parameters,
-            "gradient_as_bucket_view": config.distributed.gradient_as_bucket_view,
-            "broadcast_buffers": True,  # Usually best to keep this True
-        }
+        if not self.is_distributed(config):
+            return
+        
+        # If we're scaling learning rate by world size
+        if hasattr(config, 'scale_lr_by_world_size') and config.scale_lr_by_world_size:
+            world_size = distributed.get_world_size()
+            for param_group in model.optimizer.param_groups:
+                param_group['lr'] *= world_size
+                if distributed.is_main_process():
+                    print(f"Scaled learning rate to {param_group['lr']} (original * {world_size})")
+    
+    def synchronize_model(self, model: BaseModel) -> None:
+        """
+        Synchronize model parameters across all processes.
+        
+        This is useful to ensure all processes have the same model
+        parameters at the start of training.
+        
+        Args:
+            model: Model to synchronize
+        """
+        if not dist.is_initialized():
+            return
+        
+        # Broadcast model parameters from rank 0
+        for param in model.parameters.parameters():
+            dist.broadcast(param.data, src=0)
+        
+        # Synchronize all processes
+        dist.barrier()

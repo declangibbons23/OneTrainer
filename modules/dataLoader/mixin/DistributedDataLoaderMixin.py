@@ -1,143 +1,134 @@
-from abc import ABCMeta
-from typing import Optional, Dict, Any
+"""
+Mixin for distributed data loading capabilities.
 
+This mixin provides common functionality for distributed data loading
+that can be inherited by specific data loader implementations.
+"""
+
+import os
 import torch
-from torch.utils.data import DistributedSampler
+import torch.distributed as dist
+from torch.utils.data import DataLoader, Dataset, DistributedSampler
 
+from modules.util import distributed
 from modules.util.config.TrainConfig import TrainConfig
-from modules.util.distributed import (
-    is_distributed_available,
-    get_rank,
-    get_world_size,
-    is_main_process,
-    DataDistributionStrategy
-)
-
-from mgds.TrainDataLoader import TrainDataLoader
-from mgds.MGDS import MGDS
 
 
-class DistributedDataLoaderMixin(metaclass=ABCMeta):
+class DistributedDataLoaderMixin:
     """
-    A mixin that enhances data loaders with distributed training capabilities.
-    It provides methods to convert a regular data loader to a distributed one.
+    Mixin providing distributed data loading capabilities.
+    
+    This mixin can be added to any data loader to provide distributed
+    functionality such as dataset sharding, distributed sampler creation,
+    and distributed caching.
     """
     
-    def wrap_data_loader_for_distributed(
-        self,
-        data_loader: TrainDataLoader,
-        config: TrainConfig,
-        shuffle: bool = True,
-        drop_last: bool = True,
-    ) -> TrainDataLoader:
+    def is_distributed(self, config: TrainConfig) -> bool:
         """
-        Wrap a data loader with a DistributedSampler for distributed training.
+        Check if distributed training is enabled and available.
         
         Args:
-            data_loader: The original data loader
             config: Training configuration
-            shuffle: Whether to shuffle the data
-            drop_last: Whether to drop the last incomplete batch
             
         Returns:
-            TrainDataLoader with distributed sampling
+            True if distributed training is enabled and available
         """
-        if not config.distributed.enabled or not is_distributed_available():
-            return data_loader
-            
-        if config.distributed.data_loading_strategy == DataDistributionStrategy.CENTRALIZED:
-            # In centralized mode, only rank 0 loads data
-            if not is_main_process():
-                # Create an empty or minimal dataset for non-main processes
-                # They'll receive data via communication
-                return data_loader  # For now, return as is - needs implementation
-            else:
-                return data_loader
-                
-        # For distributed strategy - each GPU loads its own data portion
-        dataset = data_loader.dataset
+        return (hasattr(config, 'distributed') and 
+                config.distributed and 
+                config.distributed.enabled and
+                distributed.is_distributed_available())
+    
+    def get_distributed_dataloader(
+        self,
+        dataset: Dataset,
+        config: TrainConfig,
+        batch_size: int,
+        shuffle: bool = True,
+        num_workers: int = 0,
+        collate_fn=None,
+    ) -> DataLoader:
+        """
+        Create a data loader suitable for distributed training.
         
-        # Create a distributed sampler
+        Args:
+            dataset: Dataset to load
+            config: Training configuration
+            batch_size: Batch size (per-GPU or global depending on strategy)
+            shuffle: Whether to shuffle the dataset
+            num_workers: Number of worker threads for loading
+            collate_fn: Function to collate samples into a batch
+            
+        Returns:
+            A data loader configured for distributed training
+        """
+        # Create distributed sampler
         sampler = DistributedSampler(
             dataset,
-            num_replicas=get_world_size(),
-            rank=get_rank(),
+            num_replicas=distributed.get_world_size(),
+            rank=distributed.get_rank(),
             shuffle=shuffle,
-            drop_last=drop_last
+            drop_last=False,
         )
         
-        # Apply the sampler to the data loader
-        # Assuming MGDS data loader supports setting a sampler
-        data_loader.sampler = sampler
-        data_loader.shuffle = False  # The sampler will handle shuffling
-        
-        return data_loader
+        # Create the dataloader with the sampler
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,  # Shuffle is handled by the sampler
+            num_workers=num_workers,
+            pin_memory=True,
+            sampler=sampler,
+            collate_fn=collate_fn,
+        )
     
-    def prepare_mgds_for_distributed(
-        self,
-        mgds: MGDS,
-        config: TrainConfig
-    ) -> MGDS:
+    def get_distributed_cache_path(self, config: TrainConfig, base_path: str) -> str:
         """
-        Prepare an MGDS for distributed training.
+        Get a distributed-aware cache path.
         
-        Args:
-            mgds: The MGDS instance
-            config: Training configuration
-            
-        Returns:
-            MGDS prepared for distributed training
-        """
-        if not config.distributed.enabled or not is_distributed_available():
-            return mgds
-            
-        # Modify batch size based on distribution strategy
-        if config.distributed.data_loading_strategy == DataDistributionStrategy.DISTRIBUTED:
-            # Keep the same global batch size by adjusting per-GPU batch size
-            # This is optional - sometimes keeping the same per-GPU batch size is preferred
-            # mgds.batch_size = mgds.batch_size // get_world_size()
-            pass
-            
-        # Set appropriate flags or configurations for distributed mode
-        # mgds.distributed_rank = get_rank()
-        # mgds.distributed_world_size = get_world_size()
-        
-        # MGDS might need additional configuration for distributed training
-        # Adjust based on the actual implementation of MGDS
-        
-        return mgds
-    
-    def get_distributed_data_info(self, config: TrainConfig) -> Dict[str, Any]:
-        """
-        Get information about the distributed training environment.
+        For distributed training, each rank may have its own cache directory
+        to avoid conflicts.
         
         Args:
             config: Training configuration
+            base_path: Base path for the cache
             
         Returns:
-            Dictionary with distributed training information
+            Path adjusted for distributed training
         """
-        if not config.distributed.enabled or not is_distributed_available():
-            return {
-                "distributed": False
-            }
+        if not self.is_distributed(config):
+            return base_path
             
-        return {
-            "distributed": True,
-            "rank": get_rank(),
-            "world_size": get_world_size(),
-            "is_main_process": is_main_process(),
-            "data_strategy": config.distributed.data_loading_strategy,
-        }
-        
-    def set_epoch_for_distributed_sampler(self, data_loader: TrainDataLoader, epoch: int):
+        rank = distributed.get_rank()
+        if config.distributed.latent_caching_strategy == distributed.DataDistributionStrategy.DISTRIBUTED:
+            # Each rank gets its own cache directory
+            return os.path.join(base_path, f"rank_{rank}")
+        else:
+            # Centralized caching - only rank 0 creates the cache, others use it
+            return base_path
+    
+    def should_skip_caching(self, config: TrainConfig) -> bool:
         """
-        Set the epoch for the DistributedSampler to ensure proper shuffling.
-        Call this at the beginning of each epoch.
+        Determine if this process should skip caching.
+        
+        For distributed caching with a centralized strategy, only rank 0
+        should perform caching.
         
         Args:
-            data_loader: The data loader with distributed sampler
-            epoch: Current epoch number
+            config: Training configuration
+            
+        Returns:
+            True if this process should skip caching
         """
-        if hasattr(data_loader, 'sampler') and isinstance(data_loader.sampler, DistributedSampler):
-            data_loader.sampler.set_epoch(epoch)
+        if not self.is_distributed(config):
+            return False
+            
+        if config.distributed.latent_caching_strategy == distributed.DataDistributionStrategy.CENTRALIZED:
+            # For centralized caching, only rank 0 does the caching
+            return distributed.get_rank() != 0
+            
+        return False
+    
+    def synchronize_after_epoch(self):
+        """Synchronize all processes after an epoch."""
+        if dist.is_initialized():
+            dist.barrier()

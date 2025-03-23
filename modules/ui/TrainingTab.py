@@ -2,13 +2,6 @@ from modules.ui.OffloadingWindow import OffloadingWindow
 from modules.ui.OptimizerParamsWindow import OptimizerParamsWindow
 from modules.ui.SchedulerParamsWindow import SchedulerParamsWindow
 from modules.ui.TimestepDistributionWindow import TimestepDistributionWindow
-
-# Try to import MultiGPUFrame, but continue if it's not available
-try:
-    from modules.ui.MultiGPUFrame import MultiGPUFrame
-    MULTI_GPU_AVAILABLE = True
-except ImportError:
-    MULTI_GPU_AVAILABLE = False
 from modules.util.config.TrainConfig import TrainConfig
 from modules.util.enum.DataType import DataType
 from modules.util.enum.EMAMode import EMAMode
@@ -91,7 +84,6 @@ class TrainingTab:
         self.__create_unet_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -106,7 +98,6 @@ class TrainingTab:
         self.__create_transformer_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -120,7 +111,6 @@ class TrainingTab:
         self.__create_unet_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -133,9 +123,8 @@ class TrainingTab:
         self.__create_prior_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_multi_gpu_frame(column_2, 0)
-        self.__create_masked_frame(column_2, 1)
-        self.__create_loss_frame(column_2, 2)
+        self.__create_masked_frame(column_2, 0)
+        self.__create_loss_frame(column_2, 1)
 
     def __setup_pixart_alpha_ui(self, column_0, column_1, column_2):
         self.__create_base_frame(column_0, 0)
@@ -146,7 +135,6 @@ class TrainingTab:
         self.__create_prior_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2, supports_vb_loss=True)
 
@@ -160,7 +148,6 @@ class TrainingTab:
         self.__create_transformer_frame(column_1, 1, supports_guidance_scale=True)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -173,7 +160,6 @@ class TrainingTab:
         self.__create_prior_frame(column_1, 1)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
 
@@ -187,66 +173,8 @@ class TrainingTab:
         self.__create_transformer_frame(column_1, 1, supports_guidance_scale=True)
         self.__create_noise_frame(column_1, 2)
 
-        self.__create_multi_gpu_frame(column_2, 0)
         self.__create_masked_frame(column_2, 1)
         self.__create_loss_frame(column_2, 2)
-
-    def __create_multi_gpu_frame(self, master, row):
-        """Create the multi-GPU settings frame"""
-        if not 'MULTI_GPU_AVAILABLE' in globals() or MULTI_GPU_AVAILABLE:
-            try:
-                # Ensure train_config has multi-GPU settings initialized
-                if not hasattr(self.train_config, 'enable_multi_gpu'):
-                    setattr(self.train_config, 'enable_multi_gpu', False)
-                if not hasattr(self.train_config, 'distributed_backend'):
-                    setattr(self.train_config, 'distributed_backend', "nccl")
-                if not hasattr(self.train_config, 'distributed_data_loading'):
-                    setattr(self.train_config, 'distributed_data_loading', True)
-                if not hasattr(self.train_config, 'use_torchrun'):
-                    setattr(self.train_config, 'use_torchrun', True)
-                if not hasattr(self.train_config, 'lr_scaling'):
-                    setattr(self.train_config, 'lr_scaling', True)
-                
-                # Create multi-GPU frame
-                multi_gpu_frame = MultiGPUFrame(master=master, ui_state=self.ui_state)
-                multi_gpu_frame.grid(row=row, column=0, padx=5, pady=5, sticky="nsew")
-                
-                # Update frame from config
-                multi_gpu_frame.update_from_config(self.train_config)
-                
-                # Add tooltip about GPU count
-                gpu_count = 0
-                try:
-                    import torch
-                    gpu_count = torch.cuda.device_count()
-                    if gpu_count < 2:
-                        info_label = ctk.CTkLabel(
-                            multi_gpu_frame,
-                            text=f"Note: {gpu_count} GPU{'s' if gpu_count != 1 else ''} detected. Multi-GPU requires at least 2 GPUs.",
-                            font=("Roboto", 10),
-                            text_color="orange"
-                        )
-                        info_label.grid(row=100, column=0, columnspan=2, sticky="w", padx=5, pady=2)
-                except:
-                    pass
-                    
-            except Exception as e:
-                # If something goes wrong, create a basic frame with info message
-                frame = ctk.CTkFrame(master=master, corner_radius=5)
-                frame.grid(row=row, column=0, padx=5, pady=5, sticky="nsew")
-                frame.grid_columnconfigure(0, weight=1)
-                
-                import traceback
-                error_text = f"Multi-GPU settings unavailable.\n{str(e)}"
-                print(f"Error creating multi-GPU frame: {e}")
-                print(traceback.format_exc())
-                
-                info_label = ctk.CTkLabel(
-                    frame,
-                    text=error_text,
-                    text_color="red"
-                )
-                info_label.grid(row=0, column=0, padx=10, pady=10)
 
     def __create_base_frame(self, master, row):
         frame = ctk.CTkFrame(master=master, corner_radius=5)

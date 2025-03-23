@@ -1,99 +1,119 @@
-import copy
+"""
+Distributed data loader for Stable Diffusion 3 models.
+"""
 
-from modules.dataLoader.StableDiffusion3BaseDataLoader import StableDiffusion3BaseDataLoader
-from modules.dataLoader.mixin.DistributedDataLoaderMixin import DistributedDataLoaderMixin
-from modules.model.StableDiffusion3Model import StableDiffusion3Model
-from modules.util.config.TrainConfig import TrainConfig
-from modules.util.TrainProgress import TrainProgress
-from modules.util.distributed import is_distributed_available, get_rank, is_main_process
-
-from mgds.MGDS import MGDS, TrainDataLoader
-
+import os
 import torch
+from torch.utils.data import DataLoader
+
+from modules.dataLoader.mixin.DistributedDataLoaderMixin import DistributedDataLoaderMixin
+from modules.dataLoader.StableDiffusion3BaseDataLoader import StableDiffusion3BaseDataLoader
+from modules.model.BaseModel import BaseModel
+from modules.util import distributed
+from modules.util.TrainProgress import TrainProgress
+from modules.util.config.TrainConfig import TrainConfig
 
 
-class StableDiffusion3DistributedDataLoader(
-    StableDiffusion3BaseDataLoader,
-    DistributedDataLoaderMixin,
-):
+class StableDiffusion3DistributedDataLoader(StableDiffusion3BaseDataLoader, DistributedDataLoaderMixin):
     """
-    StableDiffusion3 data loader with distributed training support.
-    This extends the base data loader with distributed capabilities.
+    Distributed data loader for Stable Diffusion 3 models.
+    
+    This class extends the base SD3 data loader with distributed capabilities
+    provided by the DistributedDataLoaderMixin.
     """
     
-    def __init__(
-            self,
-            train_device: torch.device,
-            temp_device: torch.device,
-            config: TrainConfig,
-            model: StableDiffusion3Model,
-            train_progress: TrainProgress,
-            is_validation: bool = False,
-    ):
-        # Initialize the base data loader
-        super().__init__(
-            train_device=train_device,
-            temp_device=temp_device,
-            config=config,
-            model=model,
-            train_progress=train_progress,
-            is_validation=is_validation,
-        )
-        
-        # Store distributed-specific configuration
-        self.is_distributed = config.distributed.enabled and is_distributed_available()
-        self.rank = get_rank() if self.is_distributed else 0
-        self.is_main = is_main_process() if self.is_distributed else True
-        
-        # Print distributed info on the main process
-        if self.is_distributed and self.is_main:
-            print(f"Initialized distributed data loader with {self.get_distributed_data_info(config)}")
-    
-    def get_data_set(self) -> MGDS:
+    def __init__(self, model: BaseModel, train_progress: TrainProgress, config: TrainConfig, is_validation: bool = False):
         """
-        Get the MGDS data set, prepared for distributed training if enabled.
-        """
-        dataset = super().get_data_set()
+        Initialize the distributed data loader.
         
-        if self.is_distributed:
-            # Prepare the dataset for distributed training
-            dataset = self.prepare_mgds_for_distributed(dataset, self._get_config())
+        Args:
+            model: Model to load data for
+            train_progress: Current training progress
+            config: Training configuration
+            is_validation: Whether this is a validation data loader
+        """
+        super().__init__(model, train_progress, config, is_validation)
+        
+        # Print distributed info
+        if self.is_distributed(config):
+            rank = distributed.get_rank()
+            world_size = distributed.get_world_size()
+            print(f"[Rank {rank}] Initializing StableDiffusion3DistributedDataLoader (World Size: {world_size})")
             
-        return dataset
+            # Log if we're using sharded datasets
+            strategy = config.distributed.data_loading_strategy
+            print(f"[Rank {rank}] Using {strategy} data loading strategy")
     
-    def get_data_loader(self) -> TrainDataLoader:
+    def _get_cache_dir(self) -> str:
         """
-        Get the data loader, wrapped for distributed training if enabled.
-        """
-        data_loader = super().get_data_loader()
+        Get the cache directory, adjusted for distributed training.
         
-        if self.is_distributed:
-            # Wrap the data loader for distributed training
-            data_loader = self.wrap_data_loader_for_distributed(
-                data_loader=data_loader,
-                config=self._get_config(),
-                shuffle=True,
-                drop_last=True
+        In distributed training, we may want separate cache directories
+        for each process to avoid conflicts.
+        
+        Returns:
+            Path to the cache directory
+        """
+        base_cache_dir = super()._get_cache_dir()
+        
+        # Use distributed-aware path if distributed training is enabled
+        return self.get_distributed_cache_path(self.config, base_cache_dir)
+    
+    def _should_skip_caching(self) -> bool:
+        """
+        Determine if this process should skip caching.
+        
+        For distributed training with a centralized caching strategy,
+        only the main process (rank 0) should perform caching.
+        
+        Returns:
+            True if this process should skip caching
+        """
+        # Check if we should skip based on distributed settings
+        if self.should_skip_caching(self.config):
+            print(f"[Rank {distributed.get_rank()}] Skipping caching (using centralized strategy)")
+            return True
+        
+        # Otherwise, use the standard check
+        return super()._should_skip_caching()
+    
+    def _create_data_loader(self, dataset) -> DataLoader:
+        """
+        Create a data loader for the dataset.
+        
+        For distributed training, we use a DistributedSampler to ensure
+        each process gets a different subset of the data.
+        
+        Args:
+            dataset: Dataset to create a loader for
+            
+        Returns:
+            DataLoader for the dataset
+        """
+        if self.is_distributed(self.config):
+            # Use distributed data loader
+            return self.get_distributed_dataloader(
+                dataset=dataset,
+                config=self.config,
+                batch_size=self.batch_size,
+                shuffle=not self.is_validation,
+                num_workers=self.num_workers,
+                collate_fn=self.collate_fn,
             )
-            
-        return data_loader
+        else:
+            # Use standard data loader
+            return super()._create_data_loader(dataset)
     
-    def _get_config(self) -> TrainConfig:
+    def _finish_epoch_processing(self):
         """
-        Get the config from the data set.
-        """
-        return self.get_data_set().settings.get('config', None)
-    
-    def start_next_epoch(self) -> None:
-        """
-        Start the next epoch, updating distributed sampler if necessary.
-        """
-        dataset = self.get_data_set()
-        data_loader = self.get_data_loader()
+        Finish processing for the current epoch.
         
-        # Set epoch for proper shuffling in distributed mode
-        if self.is_distributed:
-            self.set_epoch_for_distributed_sampler(data_loader, dataset.current_epoch)
+        For distributed training, we synchronize processes after
+        each epoch to ensure all processes start the next epoch together.
+        """
+        # Standard epoch finishing
+        super()._finish_epoch_processing()
         
-        # Call the dataset's start_next_epoch method
-        dataset.start_next_epoch()
+        # Synchronize processes if distributed
+        if self.is_distributed(self.config):
+            self.synchronize_after_epoch()

@@ -1,128 +1,279 @@
-import customtkinter as ctk
+"""
+UI Tab for distributed training settings.
+"""
 
-from modules.util.config.TrainConfig import TrainConfig
-from modules.util.distributed import DistributedBackend, DataDistributionStrategy
+import os
+import torch
+from typing import Dict, List, Tuple, Optional
+
+from PySide6 import QtCore, QtWidgets
+
+from modules.util import distributed
+from modules.util.config.DistributedConfig import Backend, DataDistributionStrategy
 from modules.util.ui import components
-from modules.util.ui.UIState import UIState
-from modules.util.ui.components import PAD
 
 
-class DistributedTrainingTab:
+class DistributedTrainingTab(QtWidgets.QWidget):
     """
-    Tab for distributed training settings in the UI.
-    Provides options for configuring multi-GPU training.
+    Tab for distributed training settings in the GUI.
     """
     
-    def __init__(self, master, train_config: TrainConfig, ui_state: UIState):
-        """
-        Initialize the distributed training tab.
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
         
-        Args:
-            master: The parent widget
-            train_config: The training configuration
-            ui_state: The UI state
-        """
-        self.train_config = train_config
-        self.ui_state = ui_state
+        # Initialize with detected GPU count
+        self.refresh_gpu_info()
+    
+    def setup_ui(self):
+        """Set up the UI components."""
+        layout = QtWidgets.QVBoxLayout(self)
         
-        self.frame = ctk.CTkScrollableFrame(master, fg_color="transparent")
-        self.frame.grid_columnconfigure(0, weight=0)
-        self.frame.grid_columnconfigure(1, weight=1)
-        self.frame.grid_columnconfigure(2, minsize=50)
-        self.frame.grid_columnconfigure(3, weight=0)
-        self.frame.grid_columnconfigure(4, weight=1)
+        # GPU info section
+        gpu_group = QtWidgets.QGroupBox("GPU Information")
+        gpu_layout = QtWidgets.QVBoxLayout(gpu_group)
+        
+        self.gpu_info_label = QtWidgets.QLabel("Detecting GPUs...")
+        gpu_layout.addWidget(self.gpu_info_label)
+        
+        self.refresh_button = QtWidgets.QPushButton("Refresh GPU Info")
+        self.refresh_button.clicked.connect(self.refresh_gpu_info)
+        gpu_layout.addWidget(self.refresh_button)
+        
+        layout.addWidget(gpu_group)
         
         # Enable distributed training
-        components.label(self.frame, 0, 0, "Enable Distributed Training",
-                          tooltip="Enable distributed training across multiple GPUs")
-        components.switch(self.frame, 0, 1, self.ui_state, "distributed.enabled")
+        self.enable_distributed = components.create_checkbox(
+            "Enable distributed training", False,
+            "Use multiple GPUs for training with PyTorch DistributedDataParallel"
+        )
+        layout.addWidget(self.enable_distributed)
+        
+        # Distributed settings container (only visible when enabled)
+        self.distributed_settings = QtWidgets.QWidget()
+        distributed_layout = QtWidgets.QVBoxLayout(self.distributed_settings)
+        distributed_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Connection settings
+        connection_group = QtWidgets.QGroupBox("Connection Settings")
+        connection_layout = QtWidgets.QFormLayout(connection_group)
         
         # Backend selection
-        components.label(self.frame, 1, 0, "Backend",
-                          tooltip="Communication backend to use (NCCL for NVIDIA GPUs, Gloo as fallback)")
-        components.options_kv(self.frame, 1, 1, [
-            ("NCCL", DistributedBackend.NCCL),
-            ("Gloo", DistributedBackend.GLOO),
-        ], self.ui_state, "distributed.backend")
-        
-        # Data loading strategy
-        components.label(self.frame, 2, 0, "Data Loading Strategy",
-                          tooltip="How to distribute data loading across GPUs")
-        components.options_kv(self.frame, 2, 1, [
-            ("Distributed", DataDistributionStrategy.DISTRIBUTED),
-            ("Centralized", DataDistributionStrategy.CENTRALIZED),
-        ], self.ui_state, "distributed.data_loading_strategy")
-        
-        # Latent caching strategy
-        components.label(self.frame, 3, 0, "Latent Caching Strategy",
-                          tooltip="How to distribute latent caching across GPUs")
-        components.options_kv(self.frame, 3, 1, [
-            ("Distributed", DataDistributionStrategy.DISTRIBUTED),
-            ("Centralized", DataDistributionStrategy.CENTRALIZED),
-        ], self.ui_state, "distributed.latent_caching_strategy")
-        
-        # NVLink detection
-        components.label(self.frame, 4, 0, "Detect NVLink",
-                          tooltip="Detect and optimize for NVLink connections between GPUs")
-        components.switch(self.frame, 4, 1, self.ui_state, "distributed.detect_nvlink")
-        
-        # Advanced settings section
-        section_label = components.label(self.frame, 5, 0, "Advanced Settings", pad=(PAD, PAD*2))
-        section_label.configure(font=ctk.CTkFont(weight="bold"))
-        
-        # Find unused parameters
-        components.label(self.frame, 6, 0, "Find Unused Parameters",
-                          tooltip="Enable finding unused parameters in the forward pass (slower but more flexible)")
-        components.switch(self.frame, 6, 1, self.ui_state, "distributed.find_unused_parameters")
-        
-        # Gradient as bucket view
-        components.label(self.frame, 7, 0, "Gradient as Bucket View",
-                          tooltip="Enable memory-efficient gradient views (recommended)")
-        components.switch(self.frame, 7, 1, self.ui_state, "distributed.gradient_as_bucket_view")
-        
-        # Bucket cap MB
-        components.label(self.frame, 8, 0, "Bucket Cap MB",
-                          tooltip="Maximum size in MB for gradient buckets")
-        components.entry(self.frame, 8, 1, self.ui_state, "distributed.bucket_cap_mb")
-        
-        # Launch method section
-        section_label = components.label(self.frame, 9, 0, "Launch Settings", pad=(PAD, PAD*2))
-        section_label.configure(font=ctk.CTkFont(weight="bold"))
-        
-        # Use torchrun
-        components.label(self.frame, 10, 0, "Use torchrun",
-                          tooltip="Use torchrun for launching distributed training (recommended)")
-        components.switch(self.frame, 10, 1, self.ui_state, "distributed.use_torchrun")
+        self.backend = components.create_combo_box(
+            ["nccl", "gloo"], 
+            "nccl",
+            "Backend for distributed communication (nccl recommended for GPU)"
+        )
+        connection_layout.addRow("Backend:", self.backend)
         
         # Master address
-        components.label(self.frame, 11, 0, "Master Address",
-                          tooltip="Address of the master node (for multi-node training)")
-        components.entry(self.frame, 11, 1, self.ui_state, "distributed.master_addr")
+        self.master_addr = components.create_line_edit(
+            "localhost", 
+            "Address of the master node"
+        )
+        connection_layout.addRow("Master Address:", self.master_addr)
         
         # Master port
-        components.label(self.frame, 11, 3, "Master Port",
-                          tooltip="Port of the master node (for multi-node training)")
-        components.entry(self.frame, 11, 4, self.ui_state, "distributed.master_port")
+        self.master_port = components.create_line_edit(
+            "12355", 
+            "Port of the master node"
+        )
+        connection_layout.addRow("Master Port:", self.master_port)
         
         # Timeout
-        components.label(self.frame, 12, 0, "Timeout (seconds)",
-                          tooltip="Timeout for operations in seconds")
-        components.entry(self.frame, 12, 1, self.ui_state, "distributed.timeout_seconds")
-        
-        # Help text
-        help_text = (
-            "To run distributed training:\n\n"
-            "1. Enable distributed training above\n"
-            "2. Configure your settings\n"
-            "3. Use train_distributed.py instead of train.py\n\n"
-            "For single-node multi-GPU: python scripts/train_distributed.py --multi_gpu --config path/to/config.json\n\n"
-            "For torchrun: torchrun --nproc_per_node=NUM_GPUS scripts/train_distributed.py --config path/to/config.json"
+        self.timeout = components.create_spin_box(
+            60, 7200, 1800, 60,
+            "Timeout for operations in seconds"
         )
+        connection_layout.addRow("Timeout (seconds):", self.timeout)
         
-        components.text(self.frame, 13, 0, help_text, colspan=5, height=8)
+        distributed_layout.addWidget(connection_group)
         
-        self.frame.pack(fill="both", expand=1)
+        # Strategy settings
+        strategy_group = QtWidgets.QGroupBox("Distribution Strategies")
+        strategy_layout = QtWidgets.QFormLayout(strategy_group)
         
-    def refresh_ui(self):
-        """Refresh the UI elements based on current configuration."""
-        pass
+        # Data loading strategy
+        self.data_strategy = components.create_combo_box(
+            ["distributed", "centralized"], 
+            "distributed",
+            "Strategy for data loading (distributed=each GPU loads a subset, centralized=rank 0 loads all)"
+        )
+        strategy_layout.addRow("Data Loading Strategy:", self.data_strategy)
+        
+        # Caching strategy
+        self.cache_strategy = components.create_combo_box(
+            ["distributed", "centralized"], 
+            "distributed",
+            "Strategy for latent caching (distributed=each GPU caches a subset, centralized=rank 0 caches all)"
+        )
+        strategy_layout.addRow("Latent Caching Strategy:", self.cache_strategy)
+        
+        distributed_layout.addWidget(strategy_group)
+        
+        # Advanced settings
+        advanced_group = QtWidgets.QGroupBox("Advanced Settings")
+        advanced_layout = QtWidgets.QVBoxLayout(advanced_group)
+        
+        self.detect_nvlink = components.create_checkbox(
+            "Detect and optimize for NVLink", True,
+            "Detect and apply optimizations for NVLink connections between GPUs"
+        )
+        advanced_layout.addWidget(self.detect_nvlink)
+        
+        self.find_unused_parameters = components.create_checkbox(
+            "Find unused parameters", False,
+            "Find unused parameters in forward pass (can be slower but needed for some models)"
+        )
+        advanced_layout.addWidget(self.find_unused_parameters)
+        
+        self.gradient_as_bucket_view = components.create_checkbox(
+            "Gradient as bucket view", True,
+            "Use gradient bucket view to reduce memory usage"
+        )
+        advanced_layout.addWidget(self.gradient_as_bucket_view)
+        
+        self.static_graph = components.create_checkbox(
+            "Use static graph optimization", False,
+            "Enable static graph optimization (for models without changing structure during training)"
+        )
+        advanced_layout.addWidget(self.static_graph)
+        
+        bucket_layout = QtWidgets.QHBoxLayout()
+        bucket_layout.addWidget(QtWidgets.QLabel("Bucket size (MB):"))
+        self.bucket_cap_mb = components.create_spin_box(
+            5, 100, 25, 5,
+            "Maximum bucket size in MiB for gradient communication"
+        )
+        bucket_layout.addWidget(self.bucket_cap_mb)
+        bucket_layout.addStretch()
+        advanced_layout.addLayout(bucket_layout)
+        
+        distributed_layout.addWidget(advanced_group)
+        
+        # Info and help section
+        info_group = QtWidgets.QGroupBox("Information")
+        info_layout = QtWidgets.QVBoxLayout(info_group)
+        
+        info_text = QtWidgets.QLabel(
+            "Distributed training allows utilizing multiple GPUs for faster model training. "
+            "To use this feature, you need at least 2 GPUs in your system.\n\n"
+            "When enabled, training will utilize all available GPUs. You must launch training "
+            "with the train_distributed.py script instead of the standard training script.\n\n"
+            "Example command:\n"
+            "python scripts/train_distributed.py --config your_config.json"
+        )
+        info_text.setWordWrap(True)
+        info_layout.addWidget(info_text)
+        
+        distributed_layout.addWidget(info_group)
+        
+        # Add a stretch to push everything up
+        distributed_layout.addStretch()
+        
+        # Add the settings container
+        layout.addWidget(self.distributed_settings)
+        
+        # Connect enable checkbox to show/hide settings
+        self.enable_distributed.stateChanged.connect(self.toggle_distributed_settings)
+        self.toggle_distributed_settings(self.enable_distributed.checkState())
+    
+    def refresh_gpu_info(self):
+        """Refresh GPU information display."""
+        gpu_count = torch.cuda.device_count()
+        
+        if gpu_count == 0:
+            self.gpu_info_label.setText("No CUDA-capable GPUs detected")
+            self.enable_distributed.setEnabled(False)
+            self.enable_distributed.setChecked(False)
+            return
+            
+        if gpu_count == 1:
+            self.gpu_info_label.setText(f"1 GPU detected: {torch.cuda.get_device_name(0)}\n"
+                             f"Distributed training requires at least 2 GPUs")
+            self.enable_distributed.setEnabled(False)
+            self.enable_distributed.setChecked(False)
+            return
+            
+        # Multiple GPUs available, gather their info
+        gpu_info = f"{gpu_count} GPUs detected:\n"
+        for i in range(gpu_count):
+            gpu_info += f"GPU {i}: {torch.cuda.get_device_name(i)}\n"
+        
+        self.gpu_info_label.setText(gpu_info)
+        self.enable_distributed.setEnabled(True)
+    
+    def toggle_distributed_settings(self, state):
+        """Show or hide distributed settings based on checkbox state."""
+        self.distributed_settings.setVisible(state == QtCore.Qt.CheckState.Checked)
+    
+    def get_config(self) -> Dict:
+        """
+        Get the distributed configuration.
+        
+        Returns:
+            Dictionary with distributed configuration
+        """
+        if not self.enable_distributed.isChecked():
+            return {"enabled": False}
+        
+        return {
+            "enabled": True,
+            "backend": self.backend.currentText(),
+            "master_addr": self.master_addr.text(),
+            "master_port": self.master_port.text(),
+            "timeout": self.timeout.value(),
+            "detect_nvlink": self.detect_nvlink.isChecked(),
+            "data_loading_strategy": self.data_strategy.currentText(),
+            "latent_caching_strategy": self.cache_strategy.currentText(),
+            "find_unused_parameters": self.find_unused_parameters.isChecked(),
+            "gradient_as_bucket_view": self.gradient_as_bucket_view.isChecked(),
+            "bucket_cap_mb": self.bucket_cap_mb.value(),
+            "static_graph": self.static_graph.isChecked(),
+        }
+    
+    def set_config(self, config: Dict):
+        """
+        Set the distributed configuration.
+        
+        Args:
+            config: Dictionary with distributed configuration
+        """
+        if not config:
+            self.enable_distributed.setChecked(False)
+            return
+            
+        self.enable_distributed.setChecked(config.get("enabled", False))
+        
+        if "backend" in config:
+            self.backend.setCurrentText(config["backend"])
+            
+        if "master_addr" in config:
+            self.master_addr.setText(config["master_addr"])
+            
+        if "master_port" in config:
+            self.master_port.setText(config["master_port"])
+            
+        if "timeout" in config:
+            self.timeout.setValue(config["timeout"])
+            
+        if "detect_nvlink" in config:
+            self.detect_nvlink.setChecked(config["detect_nvlink"])
+            
+        if "data_loading_strategy" in config:
+            self.data_strategy.setCurrentText(config["data_loading_strategy"])
+            
+        if "latent_caching_strategy" in config:
+            self.cache_strategy.setCurrentText(config["latent_caching_strategy"])
+            
+        if "find_unused_parameters" in config:
+            self.find_unused_parameters.setChecked(config["find_unused_parameters"])
+            
+        if "gradient_as_bucket_view" in config:
+            self.gradient_as_bucket_view.setChecked(config["gradient_as_bucket_view"])
+            
+        if "bucket_cap_mb" in config:
+            self.bucket_cap_mb.setValue(config["bucket_cap_mb"])
+            
+        if "static_graph" in config:
+            self.static_graph.setChecked(config["static_graph"])

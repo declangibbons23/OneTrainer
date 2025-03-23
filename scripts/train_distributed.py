@@ -1,170 +1,221 @@
-from util.import_util import script_imports
+#!/usr/bin/env python3
+"""
+Script for launching distributed training across multiple GPUs.
 
-script_imports()
+This script initializes the distributed environment, sets up the 
+required process group, and launches the training process.
+"""
 
+import argparse
+import datetime
 import json
 import os
 import sys
-import argparse
+import time
+from pathlib import Path
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from modules.trainer.GenericTrainer import GenericTrainer
-from modules.util.args.TrainArgs import TrainArgs
+from modules.util import distributed
 from modules.util.callbacks.TrainCallbacks import TrainCallbacks
 from modules.util.commands.TrainCommands import TrainCommands
-from modules.util.config.SecretsConfig import SecretsConfig
+from modules.util.config.DistributedConfig import Backend, DataDistributionStrategy
 from modules.util.config.TrainConfig import TrainConfig
-from modules.util.distributed import (
-    DistributedBackend,
-    launch_distributed_from_args,
-    init_distributed,
-    cleanup_distributed,
-    is_distributed_available,
-    configure_nccl_for_nvlink
-)
+from modules.util.enum.ModelFormat import ModelFormat
+from modules.util.enum.TimeUnit import TimeUnit
 
 
-def parse_distributed_args():
-    parser = TrainArgs.create_parser()
-    
-    # Add distributed training specific arguments
-    parser.add_argument('--multi_gpu', action='store_true', default=False,
-                        help='Enable multi-GPU training')
-    parser.add_argument('--backend', type=str, default='nccl', choices=['nccl', 'gloo'],
-                        help='Distributed backend (nccl or gloo)')
-    parser.add_argument('--master_addr', type=str, default='localhost',
-                        help='Master node address (for multi-node training)')
-    parser.add_argument('--master_port', type=str, default='12355',
-                        help='Master port (for multi-node training)')
-    
-    args = parser.parse_args()
-    return args
-
-
-def train_worker(rank, local_rank, world_size, args=None):
+def setup_distributed_environment(rank, world_size, args):
     """
-    Worker function that runs on each distributed process.
-    """
-    # Set up environment for this process
-    torch.cuda.set_device(local_rank)
+    Set up the distributed environment for a single process.
     
+    Args:
+        rank: Current process rank
+        world_size: Total number of processes
+        args: Command line arguments
+    """
+    # Set process-specific environment variables
+    os.environ["RANK"] = str(rank)
+    os.environ["WORLD_SIZE"] = str(world_size)
+    os.environ["LOCAL_RANK"] = str(rank)
+    os.environ["MASTER_ADDR"] = args.master_addr
+    os.environ["MASTER_PORT"] = args.master_port
+    
+    # Configure GPU device
+    if torch.cuda.is_available():
+        torch.cuda.set_device(rank)
+    
+    # Set backend
+    backend = args.backend
+    
+    # Configure NCCL for better performance if using NVLink
+    if backend == Backend.NCCL and args.detect_nvlink:
+        distributed.configure_nccl_for_nvlink()
+    
+    # Initialize the process group
+    dist.init_process_group(
+        backend=backend,
+        timeout=datetime.timedelta(seconds=args.timeout),
+    )
+    
+    # Print information about the distributed setup
+    if rank == 0:
+        print(f"Initialized distributed environment with {world_size} processes")
+        print(f"Master: {args.master_addr}:{args.master_port}, Backend: {backend}")
+    
+    # Synchronize all processes
+    dist.barrier()
+
+
+def load_config(args):
+    """
+    Load and configure the training configuration.
+    
+    Args:
+        args: Command line arguments
+        
+    Returns:
+        Configured TrainConfig object
+    """
+    # Load the base training config
+    config_path = args.config
+    with open(config_path, 'r') as f:
+        config_dict = json.load(f)
+    
+    # Create config object from dictionary
+    config = TrainConfig()
+    config.from_dict(config_dict)
+    
+    # Add or update distributed configuration
+    if not hasattr(config, 'distributed'):
+        from modules.util.config.DistributedConfig import DistributedConfig
+        config.distributed = DistributedConfig()
+    
+    # Enable distributed training
+    config.distributed.enabled = True
+    
+    # Set distributed configuration from arguments
+    config.distributed.backend = args.backend
+    config.distributed.master_addr = args.master_addr
+    config.distributed.master_port = args.master_port
+    config.distributed.timeout = args.timeout
+    config.distributed.detect_nvlink = args.detect_nvlink
+    config.distributed.data_loading_strategy = args.data_strategy
+    config.distributed.latent_caching_strategy = args.cache_strategy
+    config.distributed.find_unused_parameters = args.find_unused_parameters
+    config.distributed.gradient_as_bucket_view = args.gradient_as_bucket_view
+    config.distributed.bucket_cap_mb = args.bucket_cap_mb
+    config.distributed.static_graph = args.static_graph
+    
+    # Set device based on local rank
+    local_rank = distributed.get_local_rank()
+    config.train_device = f"cuda:{local_rank}"
+    
+    return config
+
+
+def train_worker(rank, world_size, args):
+    """
+    Worker function for each distributed process.
+    
+    Args:
+        rank: Current process rank
+        world_size: Total number of processes
+        args: Command line arguments
+    """
+    # Set up distributed environment
+    setup_distributed_environment(rank, world_size, args)
+    
+    # Load and configure training
+    config = load_config(args)
+    
+    # Create dummy callbacks and commands
+    # These could be extended to support remote monitoring
     callbacks = TrainCallbacks()
     commands = TrainCommands()
-
-    train_config = TrainConfig.default_values()
-    with open(args.config_path, "r") as f:
-        config_dict = json.load(f)
-        train_config.from_dict(config_dict)
     
-    # Enable distributed training in config
-    train_config.distributed.enabled = True
-    train_config.distributed.backend = DistributedBackend(args.backend)
-    train_config.distributed.master_addr = args.master_addr
-    train_config.distributed.master_port = int(args.master_port)
+    # Create trainer and start training
+    trainer = GenericTrainer(config, callbacks, commands)
     
-    # Set device-specific settings
-    train_config.train_device = f"cuda:{local_rank}"
-    
-    # Load secrets if available
     try:
-        with open("secrets.json" if args.secrets_path is None else args.secrets_path, "r") as f:
-            secrets_dict = json.load(f)
-            train_config.secrets = SecretsConfig.default_values().from_dict(secrets_dict)
-    except FileNotFoundError:
-        if args.secrets_path is not None:
-            raise
-
-    # Only show progress on rank 0
-    if rank != 0:
-        callbacks = TrainCallbacks(silent=True)
-
-    trainer = GenericTrainer(train_config, callbacks, commands)
-
-    # Print information about this process
-    if rank == 0:
-        print(f"Starting distributed training with {world_size} processes")
-        print(f"Backend: {args.backend}")
-        if train_config.distributed.detect_nvlink:
-            print("NVLink detection enabled")
-
-    trainer.start()
-
-    canceled = False
-    try:
+        # Start trainer
+        trainer.start()
+        
+        # Run training loop
+        if rank == 0:
+            print(f"Starting distributed training with {world_size} processes")
         trainer.train()
-    except KeyboardInterrupt:
-        canceled = True
     except Exception as e:
-        print(f"Error in worker {rank}: {e}")
-        cleanup_distributed()
-        raise
-
-    # Only save on rank 0 or if backup_before_save is enabled
-    if rank == 0 and (not canceled or train_config.backup_before_save):
-        trainer.end()
-    
-    # Cleanup
-    cleanup_distributed()
+        print(f"Error in rank {rank}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Clean up
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 def main():
-    # Parse arguments
-    args = parse_distributed_args()
+    """Main function to parse arguments and launch training."""
+    parser = argparse.ArgumentParser(description="Distributed training script for OneTrainer")
     
-    # Check if distributed training is possible
-    if args.multi_gpu and not is_distributed_available():
-        print("Multi-GPU training requested but torch.cuda.device_count() <= 1 or CUDA not available")
-        print("Falling back to single GPU training")
-        args.multi_gpu = False
+    # Basic arguments
+    parser.add_argument("--config", type=str, required=True, 
+                        help="Path to the training configuration JSON file")
     
-    # If running with torchrun/torch.distributed.launch, environment variables will be set
-    using_launch_script = "RANK" in os.environ and "WORLD_SIZE" in os.environ
+    # Distributed specific arguments
+    parser.add_argument("--backend", type=str, choices=["nccl", "gloo"], default="nccl",
+                        help="Distributed backend to use (nccl for GPU, gloo for CPU)")
+    parser.add_argument("--master_addr", type=str, default="localhost",
+                        help="Master node address")
+    parser.add_argument("--master_port", type=str, default="12355",
+                        help="Master node port")
+    parser.add_argument("--timeout", type=int, default=1800,
+                        help="Timeout for operations in seconds")
+    parser.add_argument("--detect_nvlink", action="store_true", default=True,
+                        help="Detect and optimize for NVLink")
+    parser.add_argument("--data_strategy", type=str, 
+                        choices=["distributed", "centralized"], default="distributed",
+                        help="Strategy for data loading (distributed=each GPU loads a subset, centralized=rank 0 loads all)")
+    parser.add_argument("--cache_strategy", type=str, 
+                        choices=["distributed", "centralized"], default="distributed",
+                        help="Strategy for latent caching (distributed=each GPU caches a subset, centralized=rank 0 caches all)")
+    parser.add_argument("--find_unused_parameters", action="store_true", default=False,
+                        help="Find unused parameters in forward pass (slower, but needed for some models)")
+    parser.add_argument("--gradient_as_bucket_view", action="store_true", default=True,
+                        help="Use gradient bucket view to reduce memory usage")
+    parser.add_argument("--bucket_cap_mb", type=int, default=25,
+                        help="Maximum bucket size in MiB")
+    parser.add_argument("--static_graph", action="store_true", default=False,
+                        help="Use static graph optimization")
     
-    if args.multi_gpu:
-        if using_launch_script:
-            # Running with torchrun or similar launcher
-            rank = int(os.environ["RANK"])
-            local_rank = int(os.environ["LOCAL_RANK"])
-            world_size = int(os.environ["WORLD_SIZE"])
-            
-            # Initialize process group
-            init_distributed(backend=DistributedBackend(args.backend))
-            
-            # Run training function
-            train_worker(rank, local_rank, world_size, args)
-        else:
-            # Launch with torch.multiprocessing.spawn
-            world_size = torch.cuda.device_count()
-            
-            if world_size > 1:
-                print(f"Launching {world_size} processes with mp.spawn (fallback method)")
-                print("For better performance, consider using torchrun instead")
-                
-                # Set environment variables for the distributed environment
-                os.environ["MASTER_ADDR"] = args.master_addr
-                os.environ["MASTER_PORT"] = args.master_port
-                
-                # Using spawn to start multiple processes
-                mp.spawn(
-                    lambda local_rank: train_worker(
-                        rank=local_rank,
-                        local_rank=local_rank,
-                        world_size=world_size,
-                        args=args
-                    ),
-                    nprocs=world_size,
-                    join=True
-                )
-            else:
-                print("Only one GPU found, running in single GPU mode")
-                train_worker(rank=0, local_rank=0, world_size=1, args=args)
-    else:
-        # Single GPU training
-        train_worker(rank=0, local_rank=0, world_size=1, args=args)
+    args = parser.parse_args()
+    
+    # Check if distributed training is available
+    if not distributed.is_distributed_available():
+        print("Error: Distributed training is not available. Need CUDA and multiple GPUs.")
+        sys.exit(1)
+    
+    # Get world size (number of GPUs)
+    world_size = torch.cuda.device_count()
+    
+    if world_size < 2:
+        print(f"Error: Distributed training requires at least 2 GPUs, but only {world_size} found.")
+        sys.exit(1)
+    
+    print(f"Launching distributed training with {world_size} GPUs")
+    
+    # Launch processes
+    mp.spawn(
+        train_worker,
+        args=(world_size, args),
+        nprocs=world_size,
+        join=True
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

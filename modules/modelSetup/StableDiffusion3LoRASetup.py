@@ -8,7 +8,6 @@ from modules.util.torch_util import state_dict_has_prefix
 from modules.util.TrainProgress import TrainProgress
 
 import torch
-import torch.distributed as dist
 
 PRESETS = {
     "attn-only": ["attn"],
@@ -196,85 +195,54 @@ class StableDiffusion3LoRASetup(
         self.__setup_requires_grad(model, config)
 
         init_model_parameters(model, self.create_parameters(model, config), self.train_device)
-def setup_train_device(
-        self,
-        model: StableDiffusion3Model,
-        config: TrainConfig,
-):
-    # Scale learning rate for distributed training
-    if self.is_distributed(config):
-        self.scale_learning_rate_for_ddp(config)
-        
-    vae_on_train_device = not config.latent_caching
-    text_encoder_1_on_train_device = \
-        config.train_text_encoder_or_embedding() \
-        or not config.latent_caching
 
-    text_encoder_2_on_train_device = \
-        config.train_text_encoder_2_or_embedding() \
-        or not config.latent_caching
+    def setup_train_device(
+            self,
+            model: StableDiffusion3Model,
+            config: TrainConfig,
+    ):
+        vae_on_train_device = not config.latent_caching
+        text_encoder_1_on_train_device = \
+            config.train_text_encoder_or_embedding() \
+            or not config.latent_caching
 
-    text_encoder_3_on_train_device = \
-        config.train_text_encoder_3_or_embedding() \
-        or not config.latent_caching
+        text_encoder_2_on_train_device = \
+            config.train_text_encoder_2_or_embedding() \
+            or not config.latent_caching
 
-    model.text_encoder_1_to(self.train_device if text_encoder_1_on_train_device else self.temp_device)
-    model.text_encoder_2_to(self.train_device if text_encoder_2_on_train_device else self.temp_device)
-    model.text_encoder_3_to(self.train_device if text_encoder_3_on_train_device else self.temp_device)
-    model.vae_to(self.train_device if vae_on_train_device else self.temp_device)
-    model.transformer_to(self.train_device)
+        text_encoder_3_on_train_device = \
+            config.train_text_encoder_3_or_embedding() \
+            or not config.latent_caching
 
-    if model.text_encoder_1:
-        if config.text_encoder.train:
-            model.text_encoder_1.train()
+        model.text_encoder_1_to(self.train_device if text_encoder_1_on_train_device else self.temp_device)
+        model.text_encoder_2_to(self.train_device if text_encoder_2_on_train_device else self.temp_device)
+        model.text_encoder_3_to(self.train_device if text_encoder_3_on_train_device else self.temp_device)
+        model.vae_to(self.train_device if vae_on_train_device else self.temp_device)
+        model.transformer_to(self.train_device)
+
+        if model.text_encoder_1:
+            if config.text_encoder.train:
+                model.text_encoder_1.train()
+            else:
+                model.text_encoder_1.eval()
+
+        if model.text_encoder_2:
+            if config.text_encoder_2.train:
+                model.text_encoder_2.train()
+            else:
+                model.text_encoder_2.eval()
+
+        if model.text_encoder_3:
+            if config.text_encoder_3.train:
+                model.text_encoder_3.train()
+            else:
+                model.text_encoder_3.eval()
+
+        model.vae.eval()
+
+        if config.prior.train:
+            model.transformer.train()
         else:
-            model.text_encoder_1.eval()
-
-    if model.text_encoder_2:
-        if config.text_encoder_2.train:
-            model.text_encoder_2.train()
-        else:
-            model.text_encoder_2.eval()
-
-    if model.text_encoder_3:
-        if config.text_encoder_3.train:
-            model.text_encoder_3.train()
-        else:
-            model.text_encoder_3.eval()
-
-    model.vae.eval()
-
-    if config.prior.train:
-        model.transformer.train()
-    else:
-        model.transformer.eval()
-        
-    # Wrap trainable components with DDP if distributed training is enabled
-    if self.is_distributed(config):
-        # Set up find_unused_parameters
-        # This is important for LoRA since not all parameters are used in every forward pass
-        find_unused_parameters = True
-        
-        # Wrap trainable components with DDP
-        if config.text_encoder.train and hasattr(model, 'text_encoder_1_lora') and model.text_encoder_1_lora is not None:
-            if dist.get_rank() == 0:
-                print(f"Wrapping text_encoder_1_lora with DDP")
-            model.text_encoder_1_lora = self.wrap_with_ddp(model.text_encoder_1_lora, config, find_unused_parameters)
-            
-        if config.text_encoder_2.train and hasattr(model, 'text_encoder_2_lora') and model.text_encoder_2_lora is not None:
-            if dist.get_rank() == 0:
-                print(f"Wrapping text_encoder_2_lora with DDP")
-            model.text_encoder_2_lora = self.wrap_with_ddp(model.text_encoder_2_lora, config, find_unused_parameters)
-            
-        if config.text_encoder_3.train and hasattr(model, 'text_encoder_3_lora') and model.text_encoder_3_lora is not None:
-            if dist.get_rank() == 0:
-                print(f"Wrapping text_encoder_3_lora with DDP")
-            model.text_encoder_3_lora = self.wrap_with_ddp(model.text_encoder_3_lora, config, find_unused_parameters)
-            
-        if config.prior.train and hasattr(model, 'transformer_lora') and model.transformer_lora is not None:
-            if dist.get_rank() == 0:
-                print(f"Wrapping transformer_lora with DDP")
-            model.transformer_lora = self.wrap_with_ddp(model.transformer_lora, config, find_unused_parameters)
             model.transformer.eval()
 
     def after_optimizer_step(
