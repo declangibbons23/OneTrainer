@@ -7,7 +7,6 @@ from typing import Any
 from modules.util.config.BaseConfig import BaseConfig
 from modules.util.config.CloudConfig import CloudConfig
 from modules.util.config.ConceptConfig import ConceptConfig
-from modules.util.config.DistributedConfig import DistributedConfig
 from modules.util.config.SampleConfig import SampleConfig
 from modules.util.config.SecretsConfig import SecretsConfig
 from modules.util.enum.AudioFormat import AudioFormat
@@ -159,6 +158,8 @@ class TrainOptimizerConfig(BaseConfig):
         data.append(("k", None, int, True))
         data.append(("xi", None, float, True))
         data.append(("n_sma_threshold", None, int, True))
+        
+        # Optimizer-specific settings continue...
         data.append(("ams_bound", False, bool, False))
         data.append(("r", None, float, True))
         data.append(("adanorm", False, bool, False))
@@ -238,8 +239,37 @@ class TrainEmbeddingConfig(BaseConfig):
 
 
 class TrainConfig(BaseConfig):
+    # Basic training settings
     training_method: TrainingMethod
     model_type: ModelType
+    
+    # Multi-GPU settings
+    enable_multi_gpu: bool
+    distributed_backend: str
+    distributed_data_loading: bool
+    use_torchrun: bool
+    lr_scaling: bool
+    world_size: int
+    local_rank: int
+    
+    @staticmethod
+    def default_values():
+        data = []
+        
+        # Basic settings
+        data.append(("training_method", TrainingMethod.FINE_TUNE, TrainingMethod, False))
+        data.append(("model_type", ModelType.STABLE_DIFFUSION_15, ModelType, False))
+        
+        # Multi-GPU settings
+        data.append(("enable_multi_gpu", False, bool, False))
+        data.append(("distributed_backend", "nccl", str, False))
+        data.append(("distributed_data_loading", True, bool, False))
+        data.append(("use_torchrun", True, bool, False))
+        data.append(("lr_scaling", True, bool, False))
+        data.append(("world_size", None, int, True))
+        data.append(("local_rank", None, int, True))
+        
+        return TrainConfig(data)
     debug_mode: bool
     debug_dir: str
     workspace_dir: str
@@ -252,6 +282,14 @@ class TrainConfig(BaseConfig):
     validate_after_unit: TimeUnit
     continue_last_backup: bool
     include_train_config: ConfigPart
+    
+    # multi-gpu settings
+    enable_multi_gpu: bool
+    world_size: int
+    rank: int
+    distributed_backend: str
+    distributed_data_loading: bool
+    learning_rate_scaling: bool
 
     # model settings
     base_model_name: str
@@ -411,9 +449,6 @@ class TrainConfig(BaseConfig):
     save_every_unit: TimeUnit
     save_skip_first: int
     save_filename_prefix: str
-
-    # distributed training
-    distributed: DistributedConfig
 
     # secrets - not saved into config file
     secrets: SecretsConfig
@@ -737,6 +772,17 @@ class TrainConfig(BaseConfig):
         data.append(("continue_last_backup", False, bool, False))
         data.append(("include_train_config", ConfigPart.NONE, ConfigPart, False))
 
+        # multi-GPU settings
+        data.append(("enable_multi_gpu", False, bool, False))
+        data.append(("distributed_backend", "nccl", str, False))
+        data.append(("world_size", None, int, True))  # Auto-detect if None
+        data.append(("use_torchrun", True, bool, False))
+        data.append(("distributed_data_loading", True, bool, False))
+        data.append(("initial_port", "12355", str, False))
+        data.append(("node_rank", 0, int, False))
+        data.append(("num_nodes", 1, int, False))
+        data.append(("master_addr", "localhost", str, False))
+
         # model settings
         data.append(("base_model_name", "stable-diffusion-v1-5/stable-diffusion-v1-5", str, False))
         data.append(("weight_dtype", DataType.FLOAT_32, DataType, False))
@@ -934,9 +980,6 @@ class TrainConfig(BaseConfig):
         data.append(("save_every_unit", TimeUnit.NEVER, TimeUnit, False))
         data.append(("save_skip_first", 0, int, False))
         data.append(("save_filename_prefix", "", str, False))
-
-        # distributed
-        data.append(("distributed", DistributedConfig.default_values(), DistributedConfig, False))
 
         # secrets
         secrets = SecretsConfig.default_values()

@@ -24,24 +24,38 @@ class DistributedTrainer(BaseTrainer):
             commands=None,
             local_rank: int = 0,
     ):
-        # Get devices from config or use defaults
-        train_device = train_config.train_device if hasattr(train_config, 'train_device') else f"cuda:{local_rank}"
-        temp_device = train_config.temp_device if hasattr(train_config, 'temp_device') else "cpu"
+        # Verify multi-GPU settings
+        if not train_config.enable_multi_gpu:
+            raise ValueError("DistributedTrainer requires enable_multi_gpu=True in config")
+            
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for distributed training")
+            
+        # Set devices
+        train_device = f"cuda:{local_rank}"
+        temp_device = "cpu"  # Always use CPU for temp storage in distributed mode
         
-        # Create dummy train_args if not using it
-        train_args = TrainArgs()
+        # Initialize parent
+        super().__init__(train_config, TrainArgs(), torch.device(train_device), torch.device(temp_device))
         
-        # Call parent init
-        super().__init__(train_config, train_args, torch.device(train_device), torch.device(temp_device))
-        
-        # Set up callbacks and commands if provided
-        self.callbacks = callbacks
-        self.commands = commands
-        
-        # Initialize distributed training properties
+        # Store rank info
         self.rank = local_rank
-        self.world_size = train_config.world_size if hasattr(train_config, 'world_size') else 1
-        self.is_main_process = local_rank == 0  # Only the first process is the main process
+        self.world_size = train_config.world_size or torch.cuda.device_count()
+        self.is_main_process = (local_rank == 0)
+        
+        # Store callbacks/commands (only main process gets these)
+        self.callbacks = callbacks if self.is_main_process else None
+        self.commands = commands if self.is_main_process else None
+        
+        # Initialize process group if needed
+        if not dist.is_initialized():
+            self._setup_distributed()
+            
+        # Log initialization
+        if self.is_main_process:
+            logger.info(f"Initialized DistributedTrainer with {self.world_size} processes")
+            logger.info(f"Using {train_config.distributed_backend} backend")
+            logger.info(f"Process {local_rank}/{self.world_size-1}")
         
         # Configure logging based on rank
         if not self.is_main_process:
@@ -64,35 +78,86 @@ class DistributedTrainer(BaseTrainer):
             logger.info(f"Using {self.train_config.distributed_backend} backend")
             logger.info(f"Distributed data loading: {self.train_config.distributed_data_loading}")
     
-    def start(self):
-        """
-        Start training process, initialize distributed environment if needed.
-        """
-        # If distributed environment is not yet initialized, do it now
-        if not dist.is_initialized():
-            from modules.util.distributed_util import setup_distributed
-            
+    def _setup_distributed(self):
+        """Initialize the distributed training environment"""
+        try:
             # Get distributed parameters from config
-            local_rank = getattr(self.train_config, 'local_rank', 0)
-            world_size = getattr(self.train_config, 'world_size', torch.cuda.device_count())
-            backend = getattr(self.train_config, 'distributed_backend', 'nccl')
-            
-            # Use default port or random port
+            backend = self.train_config.distributed_backend
             port = getattr(self.train_config, 'dist_port', 12355)
             
-            logger.info(f"Initializing distributed environment: rank={local_rank}, world_size={world_size}")
-            setup_distributed(local_rank, world_size, backend, port)
+            # Initialize environment variables
+            os.environ['MASTER_ADDR'] = 'localhost'
+            os.environ['MASTER_PORT'] = str(port)
             
-            # Update rank and world size based on initialized values
-            self.rank = dist.get_rank()
-            self.world_size = dist.get_world_size()
-            self.is_main_process = self.rank == 0
+            # Initialize process group
+            dist.init_process_group(
+                backend=backend,
+                rank=self.rank,
+                world_size=self.world_size
+            )
             
             # Set device for this process
             torch.cuda.set_device(self.rank)
-        
+            
+            if self.is_main_process:
+                logger.info(f"Initialized distributed process group:")
+                logger.info(f"  Backend: {backend}")
+                logger.info(f"  World size: {self.world_size}")
+                logger.info(f"  Rank: {self.rank}")
+                logger.info(f"  Port: {port}")
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize distributed environment: {e}")
+            raise
+            
+    def start(self):
+        """Start the training process"""
+        if self.is_main_process:
+            logger.info("Starting distributed training...")
+            
         # Call parent start method
         super().start()
+        
+    def train_initialize(self):
+        """Initialize training for distributed mode"""
+        if self.is_main_process:
+            logger.info("Initializing distributed training...")
+            
+        # Initialize base trainer
+        super().train_initialize()
+        
+        # Scale learning rate if enabled
+        if self.train_config.lr_scaling:
+            original_lr = self.train_config.learning_rate
+            scaled_lr = original_lr * self.world_size
+            if self.is_main_process:
+                logger.info(f"Scaling learning rate for {self.world_size} GPUs: {original_lr} -> {scaled_lr}")
+            self.train_config.learning_rate = scaled_lr
+        
+        # Set up distributed sampler if enabled
+        if self.train_config.distributed_data_loading:
+            if hasattr(self.model, 'train_dataloader'):
+                from torch.utils.data.distributed import DistributedSampler
+                
+                # Create distributed sampler
+                sampler = DistributedSampler(
+                    self.model.train_dataloader.dataset,
+                    num_replicas=self.world_size,
+                    rank=self.rank,
+                    shuffle=True
+                )
+                
+                # Update dataloader with distributed sampler
+                self.model.train_dataloader = torch.utils.data.DataLoader(
+                    self.model.train_dataloader.dataset,
+                    batch_size=self.train_config.batch_size,
+                    sampler=sampler,
+                    num_workers=self.train_config.dataloader_threads,
+                    pin_memory=True
+                )
+                
+                if self.is_main_process:
+                    logger.info("Initialized distributed data loading")
 
     def post_loading_setup(self, model: BaseModel):
         """
@@ -132,36 +197,57 @@ class DistributedTrainer(BaseTrainer):
         if dist.is_initialized() and dist.get_world_size() > 1:
             # Synchronize all processes at this point
             dist.barrier()
-    
     def train(self):
-        """
-        Run the training loop.
-        """
+        """Run the distributed training loop"""
         try:
             # Initialize training
             self.train_initialize()
             
+            if self.is_main_process:
+                logger.info("Starting distributed training loop...")
+            
+            # Wrap model in DDP if not already wrapped
+            if not isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
+                self.model = torch.nn.parallel.DistributedDataParallel(
+                    self.model,
+                    device_ids=[self.rank],
+                    output_device=self.rank
+                )
+                if self.is_main_process:
+                    logger.info("Model wrapped in DistributedDataParallel")
+            
             # Main training loop
             while not self.is_finished():
-                self.train_step()
-                
-                # Synchronize at regular intervals
-                if self.model.train_progress.global_step % 100 == 0:
-                    self.sync_model_state()
+                try:
+                    self.train_step()
+                    
+                    # Synchronize at regular intervals
+                    if self.model.train_progress.global_step % 100 == 0:
+                        self.sync_model_state()
+                        if self.is_main_process:
+                            logger.info(f"Step {self.model.train_progress.global_step}: Training progressing normally")
+                except Exception as step_error:
+                    logger.error(f"Error in training step on rank {self.rank}: {step_error}")
+                    raise
             
-            # Make sure all processes are done before saving final model
+            # Final synchronization
             self.sync_model_state()
+            dist.barrier()  # Make sure all processes are done
             
-            # Only the main process saves the final model
+            # Only main process handles final tasks
             if self.is_main_process:
-                # Final model save
                 if not self.train_config.save_skip_first and self.model.train_progress.epoch_progress >= 1.0:
                     self.save_model(True)
+                logger.info("Distributed training completed successfully")
                 
-                logger.info("Training finished successfully")
         except Exception as e:
             logger.error(f"Error during training on rank {self.rank}: {e}")
-            # Re-raise to ensure proper cleanup
+            import traceback
+            traceback.print_exc()
+            # Make sure other processes know about the error
+            if dist.is_initialized():
+                dist.destroy_process_group()
+            raise
             raise
     
     def save_model(self, is_final: bool = False):
@@ -205,10 +291,31 @@ class DistributedTrainer(BaseTrainer):
         
         # Call parent method
         super().sample(step_count)
-    
     def train_step(self):
-        """
-        Run a single training step.
-        """
-        # Use base class implementation
+        """Run a single distributed training step"""
+        try:
+            # Set train mode
+            self.model.train()
+            
+            # Forward pass and loss calculation
+            loss = super().train_step()
+            
+            # Synchronize gradients across processes
+            if dist.is_initialized():
+                for param in self.model.parameters():
+                    if param.grad is not None:
+                        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
+                        param.grad.data /= self.world_size
+            
+            # Log progress on main process
+            if self.is_main_process and self.callbacks:
+                self.callbacks.on_update_status(f"Training step completed (loss: {loss:.4f})")
+            
+            return loss
+            
+        except Exception as e:
+            logger.error(f"Error in distributed training step on rank {self.rank}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         return super().train_step()

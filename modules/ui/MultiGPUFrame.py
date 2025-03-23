@@ -156,34 +156,40 @@ class MultiGPUFrame(ttk.LabelFrame):
             )
             no_gpu_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=5, pady=2)
             row += 1
-
-    def _update_ui_state(self):
-        # Safety check for UI state and train_config
-        if not self.ui_state:
-            return
+def _update_ui_state(self):
+    """Update the UI state with current multi-GPU settings"""
+    if not self.ui_state or not hasattr(self.ui_state, 'train_config'):
+        return
+        
+    try:
+        # Get current values
+        enable_multi_gpu = self.enable_multi_gpu.get()
+        backend = self.backend.get()
+        distributed_data = self.distributed_data_loading.get()
+        use_torchrun = self.use_torchrun.get()
+        lr_scaling = self.lr_scaling.get()
+        
+        # Update config
+        self.ui_state.train_config.enable_multi_gpu = enable_multi_gpu
+        self.ui_state.train_config.distributed_backend = backend
+        self.ui_state.train_config.distributed_data_loading = distributed_data
+        self.ui_state.train_config.use_torchrun = use_torchrun
+        self.ui_state.train_config.lr_scaling = lr_scaling
+        
+        # Set world size if multi-GPU is enabled
+        if enable_multi_gpu:
+            import torch
+            self.ui_state.train_config.world_size = torch.cuda.device_count()
+        else:
+            self.ui_state.train_config.world_size = None
+            self.ui_state.train_config.local_rank = None
             
-        # Make sure train_config exists and is not None
-        if not hasattr(self.ui_state, 'train_config') or self.ui_state.train_config is None:
-            return
-            
-        # Update train_config with multi-GPU settings
-        try:
-            # Add enable_multi_gpu attribute if it doesn't exist
-            if not hasattr(self.ui_state.train_config, 'enable_multi_gpu'):
-                setattr(self.ui_state.train_config, 'enable_multi_gpu', False)
-                setattr(self.ui_state.train_config, 'distributed_backend', "nccl")
-                setattr(self.ui_state.train_config, 'distributed_data_loading', True)
-                setattr(self.ui_state.train_config, 'use_torchrun', True)
-                setattr(self.ui_state.train_config, 'lr_scaling', True)
-                
-            # Update settings
-            self.ui_state.train_config.enable_multi_gpu = self.enable_multi_gpu.get()
-            self.ui_state.train_config.distributed_backend = self.backend.get()
-            self.ui_state.train_config.distributed_data_loading = self.distributed_data_loading.get()
-            self.ui_state.train_config.use_torchrun = self.use_torchrun.get()
-            self.ui_state.train_config.lr_scaling = self.lr_scaling.get()
-        except Exception as e:
-            # Print error but don't crash
+        print(f"Updated multi-GPU settings: enabled={enable_multi_gpu}, backend={backend}")
+        
+    except Exception as e:
+        print(f"Error updating multi-GPU settings: {e}")
+        import traceback
+        traceback.print_exc()
             print(f"Error updating multi-GPU settings: {e}")
 
     def update_from_config(self, config):

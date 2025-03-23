@@ -5,9 +5,12 @@ from modules.util.config.TrainConfig import TrainConfig, TrainEmbeddingConfig
 from modules.util.NamedParameterGroup import NamedParameterGroupCollection
 from modules.util.TimedActionMixin import TimedActionMixin
 from modules.util.TrainProgress import TrainProgress
+import math
 
 import torch
+import torch.distributed as dist
 from torch import Tensor
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 
@@ -187,3 +190,57 @@ class BaseModelSetup(
             config.stop_training_after_unit,
             train_progress,
         )
+        
+    def is_distributed(self, config: TrainConfig):
+        """
+        Check if distributed training is enabled and initialized.
+        
+        Args:
+            config: The training configuration
+            
+        Returns:
+            bool: True if distributed training is enabled and initialized
+        """
+        return config.enable_multi_gpu and dist.is_initialized()
+    
+    def wrap_with_ddp(self, model, config: TrainConfig, find_unused_parameters=False):
+        """
+        Wrap a model with DistributedDataParallel if distributed training is enabled.
+        
+        Args:
+            model: The model to wrap
+            config: The training configuration
+            find_unused_parameters: Whether to find unused parameters
+            
+        Returns:
+            The original model or DDP-wrapped model
+        """
+        if self.is_distributed(config):
+            device_id = torch.cuda.current_device()
+            return DDP(
+                model,
+                device_ids=[device_id],
+                output_device=device_id,
+                find_unused_parameters=find_unused_parameters
+            )
+        return model
+    
+    def scale_learning_rate_for_ddp(self, config: TrainConfig):
+        """
+        Scale the learning rate based on the world size for distributed training.
+        
+        Args:
+            config: The training configuration
+        """
+        if self.is_distributed(config):
+            world_size = dist.get_world_size()
+            
+            # Store original learning rate
+            if not hasattr(config, 'original_learning_rate'):
+                config.original_learning_rate = config.learning_rate
+                
+                # Apply square root scaling rule by default
+                config.learning_rate *= math.sqrt(world_size)
+                
+                if dist.get_rank() == 0:
+                    print(f"Scaling learning rate by sqrt({world_size}): {config.original_learning_rate} → {config.learning_rate}")
