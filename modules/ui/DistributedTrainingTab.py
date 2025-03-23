@@ -4,6 +4,7 @@ from modules.util.config.TrainConfig import TrainConfig
 from modules.util.distributed import DistributedBackend, DataDistributionStrategy
 from modules.util.ui import components
 from modules.util.ui.UIState import UIState
+from modules.util.ui.components import PAD
 
 
 class DistributedTrainingTab:
