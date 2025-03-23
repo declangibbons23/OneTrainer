@@ -169,18 +169,17 @@ class MultiGPUFrame(ttk.LabelFrame):
             use_torchrun = self.use_torchrun.get()
             lr_scaling = self.lr_scaling.get()
             
-            try:
-                # Use the new setup method
-                self.ui_state.train_config.setup_multi_gpu(
-                    enable=enable_multi_gpu,
-                    backend=backend
-                )
-                
-                # Update additional settings
-                self.ui_state.train_config.distributed_data_loading = distributed_data
-                self.ui_state.train_config.use_torchrun = use_torchrun
-                self.ui_state.train_config.lr_scaling = lr_scaling
-                
+            # Use the new setup method
+            self.ui_state.train_config.setup_multi_gpu(
+                enable=enable_multi_gpu,
+                backend=backend
+            )
+            
+            # Update additional settings
+            self.ui_state.train_config.distributed_data_loading = distributed_data
+            self.ui_state.train_config.use_torchrun = use_torchrun
+            self.ui_state.train_config.lr_scaling = lr_scaling
+            
             print(f"Updated multi-GPU settings: enabled={enable_multi_gpu}, backend={backend}")
             
         except ValueError as e:
@@ -198,31 +197,56 @@ class MultiGPUFrame(ttk.LabelFrame):
             
     def _show_error(self, message: str):
         """Show error message in UI"""
-        import tkinter as tk
-        from tkinter import messagebox
-        
-        # Show error dialog
-        messagebox.showerror(
-            "Multi-GPU Configuration Error",
-            message
-        )
+        try:
+            from tkinter import messagebox
+            
+            # Show error dialog
+            messagebox.showerror(
+                "Multi-GPU Configuration Error",
+                message
+            )
+            
+            # Also print to console for logging
+            print(f"Multi-GPU Error: {message}")
+        except Exception as e:
+            # Fallback to console if messagebox fails
+            print(f"Multi-GPU Error: {message}")
+            print(f"Failed to show error dialog: {e}")
 
     def update_from_config(self, config):
         """Update UI elements from config"""
-        if hasattr(config, 'enable_multi_gpu'):
-            self.enable_multi_gpu.set(config.enable_multi_gpu)
-        
-        if hasattr(config, 'distributed_backend'):
-            self.backend.set(config.distributed_backend)
-        
-        if hasattr(config, 'distributed_data_loading'):
-            self.distributed_data_loading.set(config.distributed_data_loading)
-        
-        if hasattr(config, 'use_torchrun'):
-            self.use_torchrun.set(config.use_torchrun)
+        try:
+            # Set defaults first
+            self.enable_multi_gpu.set(False)
+            self.backend.set("nccl")
+            self.distributed_data_loading.set(True)
+            self.use_torchrun.set(True)
+            self.lr_scaling.set(True)
             
-        if hasattr(config, 'lr_scaling'):
-            self.lr_scaling.set(config.lr_scaling)
+            # Update from config if attributes exist
+            if hasattr(config, 'enable_multi_gpu'):
+                self.enable_multi_gpu.set(config.enable_multi_gpu)
+            
+            if hasattr(config, 'distributed_backend'):
+                self.backend.set(config.distributed_backend)
+            
+            if hasattr(config, 'distributed_data_loading'):
+                self.distributed_data_loading.set(config.distributed_data_loading)
+            
+            if hasattr(config, 'use_torchrun'):
+                self.use_torchrun.set(config.use_torchrun)
+                
+            if hasattr(config, 'lr_scaling'):
+                self.lr_scaling.set(config.lr_scaling)
+                
+            # Update UI state to ensure all settings are synchronized
+            self._update_ui_state()
+            
+        except Exception as e:
+            print(f"Error updating from config: {e}")
+            import traceback
+            traceback.print_exc()
+            self._show_error("Failed to load multi-GPU settings from config")
             
         # Update UI state to ensure all settings are synchronized
         self._update_ui_state()
