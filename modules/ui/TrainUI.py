@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import traceback
 import webbrowser
@@ -54,14 +55,19 @@ class TrainUI(ctk.CTk):
 
         self.title("OneTrainer")
         try:
-            # Windows attempt
-            self.iconbitmap("resources/icons/icon.ico")
+            # Try to set icon - but only on Windows
+            if os.name == 'nt':  # Check if running on Windows
+                self.iconbitmap("resources/icons/icon.ico")
+            # For other platforms, we'll use wm_iconphoto which is more universal
         except Exception as e:
             print("Error using iconbitmap:", e)
 
-        # Load a PNG icon to set the global icon for future toplevels apparently
-        self._icon_photo = PhotoImage(file="resources/icons/icon.png")
-        self.wm_iconphoto(True, self._icon_photo)
+        # Load a PNG icon to set the global icon for future toplevels
+        try:
+            self._icon_photo = PhotoImage(file="resources/icons/icon.png")
+            self.wm_iconphoto(True, self._icon_photo)
+        except Exception as e:
+            print("Error setting icon photo:", e)
         self.geometry("1100x740")
 
         # more efficient version of ctk.set_appearance_mode("System"), which retrieves the system theme on each main loop iteration

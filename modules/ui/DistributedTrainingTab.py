@@ -66,7 +66,8 @@ class DistributedTrainingTab:
         components.switch(self.frame, 4, 1, self.ui_state, "distributed.detect_nvlink")
         
         # Advanced settings section
-        components.section(self.frame, 5, 0, "Advanced Settings", colspan=5)
+        section_label = components.label(self.frame, 5, 0, "Advanced Settings", pad=(PAD, PAD*2))
+        section_label.configure(font=ctk.CTkFont(weight="bold"))
         
         # Find unused parameters
         components.label(self.frame, 6, 0, "Find Unused Parameters",
@@ -84,7 +85,8 @@ class DistributedTrainingTab:
         components.entry(self.frame, 8, 1, self.ui_state, "distributed.bucket_cap_mb")
         
         # Launch method section
-        components.section(self.frame, 9, 0, "Launch Settings", colspan=5)
+        section_label = components.label(self.frame, 9, 0, "Launch Settings", pad=(PAD, PAD*2))
+        section_label.configure(font=ctk.CTkFont(weight="bold"))
         
         # Use torchrun
         components.label(self.frame, 10, 0, "Use torchrun",
