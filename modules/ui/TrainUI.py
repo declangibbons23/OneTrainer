@@ -588,11 +588,10 @@ class TrainUI(ctk.CTk):
         if self.train_config.cloud.enabled:
             trainer = CloudTrainer(self.train_config, self.training_callbacks, self.training_commands, reattach=self.cloud_tab.reattach)
         elif hasattr(self.train_config, 'enable_multi_gpu') and self.train_config.enable_multi_gpu:
-            # Launch multi-GPU training directly, using Python's multiprocessing
-            import torch.distributed as dist
-            import torch.multiprocessing as mp
-            from modules.util.distributed_util import setup_distributed
-            
+            # Use our simplified distributed training module
+            from modules.util.simple_distributed import run_distributed_training
+            import torch
+
             print(f"Starting distributed training with {torch.cuda.device_count()} GPUs...")
             
             # Get number of GPUs to use
@@ -601,56 +600,40 @@ class TrainUI(ctk.CTk):
                 raise ValueError(f"Multi-GPU training requires at least 2 GPUs, but only {world_size} detected")
             
             # Set required distributed attributes
-            if not hasattr(self.train_config, 'world_size'):
-                self.train_config.world_size = world_size
+            self.train_config.world_size = world_size
+            self.train_config.enable_multi_gpu = True
             
-            backend = getattr(self.train_config, 'distributed_backend', 'nccl')
-            
-            # Configure distributed training
-            def _distributed_worker(rank, world_size, config, callbacks, commands):
-                # Set CUDA device for this process
-                torch.cuda.set_device(rank)
-                
-                # Initialize process group
-                setup_distributed(rank, world_size, backend)
-                
+            # Simple worker function that runs trainer on each GPU
+            def train_on_gpu(rank, world_size, config, callbacks, commands):
                 # Set device-specific configs
                 config.train_device = f"cuda:{rank}"
+                config.temp_device = "cpu"
                 config.local_rank = rank
                 
                 # Create and run distributed trainer
                 from modules.trainer.DistributedTrainer import DistributedTrainer
-                print(f"[Rank {rank}] Initializing DistributedTrainer")
+                print(f"[GPU {rank}] Initializing training")
                 
-                # Initialize trainer
                 trainer = DistributedTrainer(
                     train_config=config,
-                    callbacks=callbacks if rank == 0 else None,  # Only main process gets callbacks
-                    commands=commands if rank == 0 else None,    # Only main process gets commands
+                    callbacks=callbacks,  # Only rank 0 will receive non-None callbacks
+                    commands=commands,    # Only rank 0 will receive non-None commands
                     local_rank=rank
                 )
                 
                 try:
-                    print(f"[Rank {rank}] Starting training")
                     trainer.start()
                     trainer.train()
-                except Exception as e:
-                    print(f"[Rank {rank}] Error during training: {e}")
-                    import traceback
-                    traceback.print_exc()
                 finally:
-                    print(f"[Rank {rank}] Ending training")
                     trainer.end()
-                    # Clean up process group
-                    dist.destroy_process_group()
             
-            # Use spawn method to launch processes
-            print("Launching training processes...")
-            mp.spawn(
-                _distributed_worker,
-                args=(world_size, self.train_config, self.training_callbacks, self.training_commands),
-                nprocs=world_size,
-                join=True
+            # Launch distributed training
+            run_distributed_training(
+                train_function=train_on_gpu,
+                world_size=world_size,
+                config=self.train_config,
+                callbacks=self.training_callbacks,
+                commands=self.training_commands
             )
             
             # Create a dummy trainer to satisfy the return expectation

@@ -41,8 +41,7 @@ class DistributedTrainer(BaseTrainer):
         # Initialize distributed training properties
         self.rank = local_rank
         self.world_size = train_config.world_size if hasattr(train_config, 'world_size') else 1
-        self.is_main_process = local_rank == 0
-        self.is_main_process = rank == 0
+        self.is_main_process = local_rank == 0  # Only the first process is the main process
         
         # Configure logging based on rank
         if not self.is_main_process:
